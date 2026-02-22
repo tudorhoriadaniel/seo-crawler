@@ -175,15 +175,21 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="No pages found for this crawl")
 
     total = len(pages)
-    avg_score = sum(p.score or 0 for p in pages) / total
 
-    # Count issues by severity
+    # Separate redirect pages — they should NOT be counted for content/SEO issues
+    REDIRECT_CODES = {301, 302, 303, 307, 308}
+    content_pages = [p for p in pages if (p.status_code or 0) not in REDIRECT_CODES]
+    content_total = len(content_pages) or 1  # avoid division by zero
+
+    avg_score = sum(p.score or 0 for p in content_pages) / content_total
+
+    # Count issues by severity (only non-redirect pages for content issues)
     critical = 0
     warnings = 0
     info_count = 0
     issue_map = defaultdict(list)  # type -> [{url, page_id, detail}]
 
-    for p in pages:
+    for p in content_pages:
         for i in (p.issues or []):
             sev = i.get("severity", "")
             if sev == "critical":
@@ -197,10 +203,20 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
                 "url": p.url, "page_id": p.id,
                 "detail": i.get("message", ""),
             })
-
-    # --- Duplicate titles ---
-    title_groups = defaultdict(list)
+    # Also count redirect issues separately
     for p in pages:
+        if (p.status_code or 0) in REDIRECT_CODES:
+            for i in (p.issues or []):
+                if i.get("type") == "redirect":
+                    warnings += 1
+                    issue_map["redirect"].append({
+                        "url": p.url, "page_id": p.id,
+                        "detail": i.get("message", ""),
+                    })
+
+    # --- Duplicate titles (exclude redirects) ---
+    title_groups = defaultdict(list)
+    for p in content_pages:
         if p.title:
             title_groups[p.title].append({"url": p.url, "page_id": p.id})
     duplicate_titles = [
@@ -208,9 +224,9 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
         for title, pg in title_groups.items() if len(pg) > 1
     ]
 
-    # --- Duplicate meta descriptions ---
+    # --- Duplicate meta descriptions (exclude redirects) ---
     meta_groups = defaultdict(list)
-    for p in pages:
+    for p in content_pages:
         if p.meta_description:
             meta_groups[p.meta_description].append({"url": p.url, "page_id": p.id})
     duplicate_metas = [
@@ -218,7 +234,7 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
         for desc, pg in meta_groups.items() if len(pg) > 1
     ]
 
-    # --- Status code breakdown ---
+    # --- Status code breakdown (ALL pages including redirects) ---
     status_groups = defaultdict(list)
     for p in pages:
         if p.status_code:
@@ -228,9 +244,9 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
         for code, pg in sorted(status_groups.items())
     ]
 
-    # --- Canonical issues ---
+    # --- Canonical issues (exclude redirects) ---
     canonical_issues = []
-    for p in pages:
+    for p in content_pages:
         if p.canonical_issues and len(p.canonical_issues) > 0:
             canonical_issues.append({
                 "url": p.url, "page_id": p.id,
@@ -238,16 +254,16 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
                 "issues": p.canonical_issues,
             })
 
-    # --- Noindex / Nofollow ---
-    noindex_pages = [{"url": p.url, "page_id": p.id} for p in pages if p.is_noindex]
-    nofollow_pages = [{"url": p.url, "page_id": p.id, "nofollow_internal": p.nofollow_internal_links} for p in pages if p.is_nofollow_meta]
+    # --- Noindex / Nofollow (exclude redirects) ---
+    noindex_pages = [{"url": p.url, "page_id": p.id} for p in content_pages if p.is_noindex]
+    nofollow_pages = [{"url": p.url, "page_id": p.id, "nofollow_internal": p.nofollow_internal_links} for p in content_pages if p.is_nofollow_meta]
 
-    # --- Images missing alt ---
+    # --- Images missing alt (exclude redirects) ---
     pages_missing_alt = []
     total_images_missing = 0
     pages_empty_alt = []
     total_images_empty_alt = 0
-    for p in pages:
+    for p in content_pages:
         if p.images_without_alt and p.images_without_alt > 0:
             sample_img = (p.images_without_alt_urls or [None])[0]
             pages_missing_alt.append({
@@ -267,9 +283,9 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
             })
             total_images_empty_alt += p.images_with_empty_alt
 
-    # --- Hreflang issues ---
+    # --- Hreflang issues (exclude redirects) ---
     hreflang_issues = []
-    for p in pages:
+    for p in content_pages:
         if p.hreflang_issues and len(p.hreflang_issues) > 0:
             hreflang_issues.append({
                 "url": p.url, "page_id": p.id,
@@ -277,23 +293,23 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
                 "entries": p.hreflang_entries,
             })
 
-    # --- Content issues ---
-    thin_content = [{"url": p.url, "page_id": p.id, "word_count": p.word_count} for p in pages if p.word_count and p.word_count < 300]
-    low_ratio = [{"url": p.url, "page_id": p.id, "ratio": p.code_to_text_ratio} for p in pages if p.code_to_text_ratio is not None and p.code_to_text_ratio < 10]
-    placeholder_pages = [{"url": p.url, "page_id": p.id, "content": p.placeholder_content} for p in pages if p.has_placeholders]
+    # --- Content issues (exclude redirects) ---
+    thin_content = [{"url": p.url, "page_id": p.id, "word_count": p.word_count} for p in content_pages if p.word_count and p.word_count < 300]
+    low_ratio = [{"url": p.url, "page_id": p.id, "ratio": p.code_to_text_ratio} for p in content_pages if p.code_to_text_ratio is not None and p.code_to_text_ratio < 10]
+    placeholder_pages = [{"url": p.url, "page_id": p.id, "content": p.placeholder_content} for p in content_pages if p.has_placeholders]
 
-    # --- Structure ---
-    missing_title = sum(1 for p in pages if not p.title)
-    missing_meta = sum(1 for p in pages if not p.meta_description)
-    missing_h1 = sum(1 for p in pages if p.h1_count == 0)
-    missing_viewport = sum(1 for p in pages if not p.has_viewport_meta)
+    # --- Structure (exclude redirects) ---
+    missing_title = sum(1 for p in content_pages if not p.title)
+    missing_meta = sum(1 for p in content_pages if not p.meta_description)
+    missing_h1 = sum(1 for p in content_pages if p.h1_count == 0)
+    missing_viewport = sum(1 for p in content_pages if not p.has_viewport_meta)
 
-    # --- Performance ---
+    # --- Performance (all pages) ---
     avg_resp = sum(p.response_time or 0 for p in pages) / total
     slow_pages = [{"url": p.url, "page_id": p.id, "response_time": p.response_time} for p in pages if p.response_time and p.response_time > 3]
 
-    # --- Schema ---
-    no_schema = sum(1 for p in pages if not p.has_schema_markup)
+    # --- Schema (exclude redirects) ---
+    no_schema = sum(1 for p in content_pages if not p.has_schema_markup)
 
     # --- Issue groups for the grouped issues table ---
     issue_groups = []
