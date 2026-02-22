@@ -54,6 +54,39 @@ class PageSummary(BaseModel):
         from_attributes = True
 
 
+class PageTableRow(BaseModel):
+    id: int
+    url: str
+    status_code: Optional[int]
+    score: Optional[int]
+    title: Optional[str]
+    title_length: Optional[int]
+    meta_description_length: Optional[int]
+    canonical_url: Optional[str]
+    is_noindex: bool = False
+    is_nofollow_meta: bool = False
+    h1_count: int = 0
+    h2_count: int = 0
+    total_images: int = 0
+    images_without_alt: int = 0
+    images_with_empty_alt: int = 0
+    internal_links: int = 0
+    external_links: int = 0
+    nofollow_links: int = 0
+    word_count: int = 0
+    code_to_text_ratio: Optional[float] = None
+    has_schema_markup: bool = False
+    has_hreflang: bool = False
+    has_viewport_meta: bool = False
+    has_lazy_loading: bool = False
+    has_placeholders: bool = False
+    response_time: Optional[float] = None
+    issues_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
 class PageDetail(BaseModel):
     id: int
     url: str

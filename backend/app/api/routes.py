@@ -10,7 +10,7 @@ from app.models.models import Project, Crawl, Page
 from app.schemas.schemas import (
     ProjectCreate, ProjectResponse,
     CrawlCreate, CrawlResponse,
-    PageSummary, PageDetail, CrawlSummary,
+    PageSummary, PageDetail, PageTableRow, CrawlSummary,
     DuplicateGroup, StatusCodeGroup, IssueGroup,
 )
 from app.crawler.engine import CrawlEngine
@@ -106,6 +106,46 @@ async def list_pages(crawl_id: int, db: AsyncSession = Depends(get_db)):
             score=p.score,
             issues_count=len(p.issues) if p.issues else 0,
             response_time=p.response_time,
+        )
+        for p in pages
+    ]
+
+
+@router.get("/crawls/{crawl_id}/pages/table", response_model=list[PageTableRow])
+async def list_pages_table(crawl_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Page).where(Page.crawl_id == crawl_id).order_by(Page.score.asc())
+    )
+    pages = result.scalars().all()
+    return [
+        PageTableRow(
+            id=p.id,
+            url=p.url,
+            status_code=p.status_code,
+            score=p.score,
+            title=p.title,
+            title_length=p.title_length,
+            meta_description_length=p.meta_description_length,
+            canonical_url=p.canonical_url,
+            is_noindex=p.is_noindex or False,
+            is_nofollow_meta=p.is_nofollow_meta or False,
+            h1_count=p.h1_count or 0,
+            h2_count=p.h2_count or 0,
+            total_images=p.total_images or 0,
+            images_without_alt=p.images_without_alt or 0,
+            images_with_empty_alt=p.images_with_empty_alt or 0,
+            internal_links=p.internal_links or 0,
+            external_links=p.external_links or 0,
+            nofollow_links=p.nofollow_links or 0,
+            word_count=p.word_count or 0,
+            code_to_text_ratio=p.code_to_text_ratio,
+            has_schema_markup=p.has_schema_markup or False,
+            has_hreflang=p.has_hreflang or False,
+            has_viewport_meta=p.has_viewport_meta or False,
+            has_lazy_loading=p.has_lazy_loading or False,
+            has_placeholders=p.has_placeholders or False,
+            response_time=p.response_time,
+            issues_count=len(p.issues) if p.issues else 0,
         )
         for p in pages
     ]

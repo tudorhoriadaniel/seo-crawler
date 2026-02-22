@@ -67,6 +67,18 @@ td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
 tr:hover { background: var(--surface2); }
 .url-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.table-scroll { overflow-x: auto; margin: 0 -20px; padding: 0 20px; }
+.table-scroll table { min-width: 1800px; }
+.table-scroll th, .table-scroll td { white-space: nowrap; padding: 6px 10px; font-size: 12px; }
+.table-scroll th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.table-scroll .url-col { min-width: 280px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.table-scroll .num-col { text-align: center; min-width: 60px; }
+.table-scroll .bool-col { text-align: center; min-width: 50px; }
+.check-yes { color: var(--red); font-weight: 700; }
+.check-no { color: var(--green); }
+.check-ok { color: var(--green); font-weight: 700; }
+.check-warn { color: var(--warning); font-weight: 700; }
+
 .accordion { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; overflow: hidden; }
 .accordion-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; background: var(--surface2); transition: background .2s; }
 .accordion-header:hover { background: var(--surface); }
@@ -122,7 +134,7 @@ tr:hover { background: var(--surface2); }
 
 <script>
 const API = '/api';
-let state = { view: 'home', projects: [], crawl: null, summary: null, pages: [], pageDetail: null, pollTimer: null };
+let state = { view: 'home', projects: [], crawl: null, summary: null, pages: [], tablePages: [], pageDetail: null, pollTimer: null };
 
 async function api(path, opts = {}) {
   const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -202,8 +214,8 @@ async function viewProject(projectId) {
     if (crawls.length === 0) return alert('No crawls yet');
     var latest = crawls[0];
     if (latest.status === 'completed') {
-      var results = await Promise.all([api('/crawls/' + latest.id + '/summary'), api('/crawls/' + latest.id + '/pages')]);
-      navigate('dashboard', { crawl: latest, summary: results[0], pages: results[1] });
+      var results = await Promise.all([api('/crawls/' + latest.id + '/summary'), api('/crawls/' + latest.id + '/pages'), api('/crawls/' + latest.id + '/pages/table')]);
+      navigate('dashboard', { crawl: latest, summary: results[0], pages: results[1], tablePages: results[2] });
     } else if (latest.status === 'running' || latest.status === 'pending') {
       navigate('crawling', { crawl: latest });
       pollCrawl(latest.id);
@@ -232,8 +244,8 @@ function pollCrawl(crawlId) {
       if (el) el.textContent = c.pages_crawled;
       if (c.status === 'completed') {
         clearInterval(state.pollTimer); state.pollTimer = null;
-        var results = await Promise.all([api('/crawls/' + c.id + '/summary'), api('/crawls/' + c.id + '/pages')]);
-        navigate('dashboard', { crawl: c, summary: results[0], pages: results[1] });
+        var results = await Promise.all([api('/crawls/' + c.id + '/summary'), api('/crawls/' + c.id + '/pages'), api('/crawls/' + c.id + '/pages/table')]);
+        navigate('dashboard', { crawl: c, summary: results[0], pages: results[1], tablePages: results[2] });
       } else if (c.status === 'failed') {
         clearInterval(state.pollTimer); state.pollTimer = null;
         alert('Crawl failed.'); navigate('home');
@@ -274,6 +286,7 @@ function renderDashboard(el) {
     { icon: '&#128269;', title: 'No Schema', count: s.pages_without_schema, sev: 'info', target: 'sec-all-issues' },
     { icon: '&#128209;', title: 'Duplicate Titles', count: s.duplicate_titles.length, sev: 'warning', target: 'sec-dup-titles' },
     { icon: '&#128260;', title: 'Placeholder Content', count: s.placeholder_pages.length, sev: 'critical', target: 'sec-content' },
+    { icon: '&#128202;', title: 'All URLs Table', count: s.total_pages, sev: 'info', target: 'sec-all-urls' },
   ];
   cats.forEach(function(c) {
     var onclick = c.count > 0 ? ' onclick="scrollToSec(\'' + c.target + '\')" style="cursor:pointer"' : '';
@@ -404,6 +417,57 @@ function renderDashboard(el) {
     s.slow_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.response_time.toFixed(2) + 's</span></td></tr>'; });
     html += '</tbody></table></div>';
   }
+
+  // ─── All URLs Table ─────────────────────────────────
+  html += '<div class="card" id="sec-all-urls"><h3>All URLs Overview <span class="badge badge-info">' + (state.tablePages || []).length + ' pages</span></h3>';
+  html += '<div class="table-scroll"><table><thead><tr>';
+  html += '<th class="url-col">URL</th><th class="num-col">Status</th><th class="num-col">Score</th><th class="num-col">Title Len</th><th class="num-col">Meta Len</th>';
+  html += '<th class="num-col">H1s</th><th class="num-col">H2s</th><th class="bool-col">Noindex</th><th class="bool-col">Nofollow</th>';
+  html += '<th class="num-col">Images</th><th class="num-col">No Alt</th><th class="num-col">Empty Alt</th>';
+  html += '<th class="num-col">Int Links</th><th class="num-col">Ext Links</th><th class="num-col">NF Links</th>';
+  html += '<th class="num-col">Words</th><th class="num-col">Text%</th>';
+  html += '<th class="bool-col">Schema</th><th class="bool-col">Hreflang</th><th class="bool-col">Viewport</th><th class="bool-col">Lazy</th><th class="bool-col">Placeh.</th>';
+  html += '<th class="num-col">Time</th><th class="num-col">Issues</th>';
+  html += '</tr></thead><tbody>';
+  (state.tablePages || []).forEach(function(p) {
+    var stc = (p.status_code || 0) < 300 ? 'badge-good' : (p.status_code || 0) < 400 ? 'badge-info' : 'badge-critical';
+    var sc = (p.score || 0) >= 70 ? 'badge-good' : (p.score || 0) >= 40 ? 'badge-warning' : 'badge-critical';
+    var tl = p.title_length || 0;
+    var tlc = (tl >= 30 && tl <= 60) ? 'check-ok' : tl === 0 ? 'check-yes' : 'check-warn';
+    var ml = p.meta_description_length || 0;
+    var mlc = (ml >= 120 && ml <= 160) ? 'check-ok' : ml === 0 ? 'check-yes' : 'check-warn';
+    var h1c = p.h1_count === 1 ? 'check-ok' : p.h1_count === 0 ? 'check-yes' : 'check-warn';
+    var wc = (p.word_count || 0) >= 300 ? '' : 'check-warn';
+    var rt = p.response_time ? p.response_time.toFixed(2) : '?';
+    var rtc = p.response_time && p.response_time > 3 ? 'check-warn' : '';
+    html += '<tr>';
+    html += '<td class="url-col"><a href="#" onclick="loadPage(' + p.id + ');return false" title="' + esc(p.url) + '">' + esc(p.url) + '</a></td>';
+    html += '<td class="num-col"><span class="badge ' + stc + '">' + (p.status_code || '?') + '</span></td>';
+    html += '<td class="num-col"><span class="badge ' + sc + '">' + (p.score || '?') + '</span></td>';
+    html += '<td class="num-col ' + tlc + '">' + tl + '</td>';
+    html += '<td class="num-col ' + mlc + '">' + ml + '</td>';
+    html += '<td class="num-col ' + h1c + '">' + (p.h1_count || 0) + '</td>';
+    html += '<td class="num-col">' + (p.h2_count || 0) + '</td>';
+    html += '<td class="bool-col">' + (p.is_noindex ? '<span class="check-yes">YES</span>' : '<span class="check-no">—</span>') + '</td>';
+    html += '<td class="bool-col">' + (p.is_nofollow_meta ? '<span class="check-yes">YES</span>' : '<span class="check-no">—</span>') + '</td>';
+    html += '<td class="num-col">' + (p.total_images || 0) + '</td>';
+    html += '<td class="num-col">' + (p.images_without_alt ? '<span class="check-warn">' + p.images_without_alt + '</span>' : '0') + '</td>';
+    html += '<td class="num-col">' + (p.images_with_empty_alt ? '<span class="check-warn">' + p.images_with_empty_alt + '</span>' : '0') + '</td>';
+    html += '<td class="num-col">' + (p.internal_links || 0) + '</td>';
+    html += '<td class="num-col">' + (p.external_links || 0) + '</td>';
+    html += '<td class="num-col">' + (p.nofollow_links || 0) + '</td>';
+    html += '<td class="num-col ' + wc + '">' + (p.word_count || 0) + '</td>';
+    html += '<td class="num-col">' + (p.code_to_text_ratio != null ? p.code_to_text_ratio + '%' : '?') + '</td>';
+    html += '<td class="bool-col">' + (p.has_schema_markup ? '<span class="check-ok">&#10003;</span>' : '<span class="check-warn">&#10007;</span>') + '</td>';
+    html += '<td class="bool-col">' + (p.has_hreflang ? '<span class="check-ok">&#10003;</span>' : '—') + '</td>';
+    html += '<td class="bool-col">' + (p.has_viewport_meta ? '<span class="check-ok">&#10003;</span>' : '<span class="check-yes">&#10007;</span>') + '</td>';
+    html += '<td class="bool-col">' + (p.has_lazy_loading ? '<span class="check-ok">&#10003;</span>' : '—') + '</td>';
+    html += '<td class="bool-col">' + (p.has_placeholders ? '<span class="check-yes">YES</span>' : '—') + '</td>';
+    html += '<td class="num-col ' + rtc + '">' + rt + 's</td>';
+    html += '<td class="num-col">' + (p.issues_count || 0) + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div></div>';
 
   // All Issues Grouped
   html += '<div class="card" id="sec-all-issues"><h3>All Issues by Type</h3>';
