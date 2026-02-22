@@ -8,12 +8,13 @@ from bs4 import BeautifulSoup
 
 
 # Placeholder patterns to detect dev/test content
+# NOTE: $variable only matches $ followed by a letter (not $0, $9.99 prices)
 PLACEHOLDER_PATTERNS = [
-    r'\$\{?\w+\}?',           # $heading, ${title}
+    r'\$\{[a-zA-Z_]\w*\}',    # ${title}, ${heading}
+    r'\$[a-zA-Z_]\w*',        # $heading, $title (but NOT $0, $9, $99.99)
     r'\{\{\s*\w+\s*\}\}',     # {{ heading }}
     r'lorem\s+ipsum',          # lorem ipsum
     r'dolor\s+sit\s+amet',     # dolor sit amet
-    r'placeholder',            # placeholder text
     r'TODO:?\s',               # TODO items
     r'FIXME:?\s',              # FIXME items
     r'XXX:?\s',                # XXX markers
@@ -171,24 +172,70 @@ class SEOAnalyzer:
 
     # ─── Images ───────────────────────────────────────────────
     def _analyze_images(self) -> dict:
+        # Find all <img> tags
         images = self.soup.find_all("img")
+        # Also find <img> inside <picture> tags (already caught by above)
+        # Also find elements with role="img" that should have alt
+        role_imgs = self.soup.find_all(attrs={"role": "img"})
+        # Also find <svg> used as images (inline SVGs without aria-label)
+        inline_svgs = self.soup.find_all("svg")
+
         total = len(images)
         without_alt = []
         with_empty_alt = 0
 
         for img in images:
             alt = img.get("alt")
-            src = img.get("src", img.get("data-src", ""))
+            src = img.get("src", img.get("data-src", img.get("data-lazy-src", "")))
             if alt is None:
                 without_alt.append(src)
             elif alt.strip() == "":
                 with_empty_alt += 1
+
+        # Check role="img" elements for aria-label
+        role_img_missing = 0
+        for el in role_imgs:
+            if el.name == "img":
+                continue  # already checked above
+            label = el.get("aria-label", el.get("aria-labelledby", ""))
+            if not label or not str(label).strip():
+                role_img_missing += 1
+
+        # Check inline SVGs for accessibility
+        svg_missing = 0
+        for svg in inline_svgs:
+            has_title = svg.find("title")
+            has_label = svg.get("aria-label", "")
+            has_labelledby = svg.get("aria-labelledby", "")
+            if not has_title and not has_label and not has_labelledby:
+                svg_missing += 1
 
         if without_alt:
             self.issues.append({
                 "severity": "warning",
                 "type": "images_missing_alt",
                 "message": f"{len(without_alt)} of {total} images missing alt attribute"
+            })
+
+        if with_empty_alt:
+            self.issues.append({
+                "severity": "warning",
+                "type": "images_empty_alt",
+                "message": f"{with_empty_alt} of {total} images have empty alt text (alt='')"
+            })
+
+        if role_img_missing:
+            self.issues.append({
+                "severity": "warning",
+                "type": "role_img_missing_label",
+                "message": f"{role_img_missing} elements with role='img' missing aria-label"
+            })
+
+        if svg_missing:
+            self.issues.append({
+                "severity": "info",
+                "type": "svg_missing_title",
+                "message": f"{svg_missing} inline SVGs missing <title> or aria-label"
             })
 
         return {

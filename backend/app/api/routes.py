@@ -203,6 +203,8 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
     # --- Images missing alt ---
     pages_missing_alt = []
     total_images_missing = 0
+    pages_empty_alt = []
+    total_images_empty_alt = 0
     for p in pages:
         if p.images_without_alt and p.images_without_alt > 0:
             pages_missing_alt.append({
@@ -212,6 +214,13 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
                 "missing_urls": p.images_without_alt_urls or [],
             })
             total_images_missing += p.images_without_alt
+        if p.images_with_empty_alt and p.images_with_empty_alt > 0:
+            pages_empty_alt.append({
+                "url": p.url, "page_id": p.id,
+                "empty_count": p.images_with_empty_alt,
+                "total_images": p.total_images,
+            })
+            total_images_empty_alt += p.images_with_empty_alt
 
     # --- Hreflang issues ---
     hreflang_issues = []
@@ -281,6 +290,8 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
         "nofollow_pages": nofollow_pages,
         "pages_missing_alt": pages_missing_alt,
         "total_images_missing_alt": total_images_missing,
+        "pages_empty_alt": pages_empty_alt,
+        "total_images_empty_alt": total_images_empty_alt,
         "hreflang_issues": hreflang_issues,
         "thin_content_pages": thin_content,
         "low_text_ratio_pages": low_ratio,

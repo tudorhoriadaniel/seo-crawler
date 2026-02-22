@@ -130,12 +130,25 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-function navigate(view, data) {
+function navigate(view, data, pushHistory) {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
   if (data) Object.assign(state, data);
   state.view = view;
+  if (pushHistory !== false) {
+    history.pushState({ view: view }, '', '#' + view);
+  }
   render();
 }
+
+window.addEventListener('popstate', function(e) {
+  if (e.state && e.state.view) {
+    state.view = e.state.view;
+    render();
+  } else {
+    state.view = 'home';
+    render();
+  }
+});
 
 function render() {
   const app = document.getElementById('app');
@@ -316,13 +329,25 @@ function renderDashboard(el) {
   }
 
   // Images Missing Alt
-  if (s.pages_missing_alt.length) {
-    html += '<div class="card"><h3>Images Missing Alt Text <span class="badge badge-warning">' + s.total_images_missing_alt + ' images</span></h3>';
-    html += '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Total</th></tr></thead><tbody>';
-    s.pages_missing_alt.forEach(function(p) {
-      html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.missing_count + '</span></td><td>' + p.total_images + '</td></tr>';
-    });
-    html += '</tbody></table></div>';
+  if (s.pages_missing_alt.length || (s.pages_empty_alt && s.pages_empty_alt.length)) {
+    html += '<div class="card"><h3>Image Alt Text Issues</h3>';
+    if (s.pages_missing_alt.length) {
+      html += '<h4 style="margin:8px 0;color:var(--warning)">Missing Alt Attribute (' + s.total_images_missing_alt + ' images)</h4>';
+      html += '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Total Images</th></tr></thead><tbody>';
+      s.pages_missing_alt.forEach(function(p) {
+        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.missing_count + '</span></td><td>' + p.total_images + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    if (s.pages_empty_alt && s.pages_empty_alt.length) {
+      html += '<h4 style="margin:12px 0 8px;color:var(--warning)">Empty Alt Text (' + (s.total_images_empty_alt || 0) + ' images)</h4>';
+      html += '<table><thead><tr><th>Page URL</th><th>Empty Alt</th><th>Total Images</th></tr></thead><tbody>';
+      s.pages_empty_alt.forEach(function(p) {
+        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.empty_count + '</span></td><td>' + p.total_images + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
   }
 
   // Hreflang Issues
@@ -441,7 +466,7 @@ function renderDetail(el) {
   var p = state.pageDetail;
   if (!p) return;
   var sc = (p.score || 0) >= 70 ? 'score-good' : (p.score || 0) >= 40 ? 'score-ok' : 'score-bad';
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><h2 style="font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">' + esc(p.url) + '</h2><button class="btn btn-sm btn-outline" onclick="navigate(\'dashboard\')">Back</button></div>';
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><h2 style="font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">' + esc(p.url) + '</h2><button class="btn btn-sm btn-outline" onclick="history.back()">Back</button></div>';
 
   html += '<div class="stats-grid">';
   html += '<div class="stat-card"><div class="score-ring ' + sc + '">' + (p.score || '?') + '</div><div class="label">Score</div></div>';
@@ -511,6 +536,7 @@ function esc(str) {
   return div.innerHTML;
 }
 
+history.replaceState({ view: 'home' }, '', '#home');
 render();
 </script>
 </body>
