@@ -529,8 +529,28 @@ function renderDashboard(el) {
   html += '<button class="btn btn-sm btn-outline" onclick="goTablePage(' + (state.tablePage + 1) + ')" ' + (state.tablePage >= totalTablePages - 1 ? 'disabled' : '') + '>Next &rsaquo;</button>';
   html += '</div></div>';
 
-  // ── Individual Issue Accordions (each issue is separate) ──
+  // ── All Issues — rendered dynamically from issue_groups ──
   html += '<div class="card"><h3>Issues</h3>';
+
+  // Human-readable names for issue categories
+  var issueNames = {
+    'missing_title': 'Missing Title Tag', 'missing_meta_description': 'Missing Meta Description',
+    'missing_h1': 'Missing H1 Tag', 'missing_viewport': 'Missing Viewport Meta',
+    'placeholder_content': 'Placeholder / Lorem Ipsum Content', 'http_error': 'HTTP Errors (4xx/5xx)',
+    'short_title': 'Short Title Tag', 'long_title': 'Long Title Tag',
+    'short_meta_description': 'Short Meta Description', 'long_meta_description': 'Long Meta Description',
+    'missing_canonical': 'Missing Canonical Tag', 'canonical_external': 'Canonical Points to External URL',
+    'canonical_mismatch': 'Canonical URL Mismatch', 'canonical_relative': 'Relative Canonical URL',
+    'images_missing_alt': 'Images Missing Alt Attribute', 'images_empty_alt': 'Images With Empty Alt',
+    'thin_content': 'Thin Content (<300 words)', 'low_text_ratio': 'Low Text-to-HTML Ratio',
+    'high_text_ratio': 'High Text-to-HTML Ratio', 'multiple_h1': 'Multiple H1 Tags',
+    'noindex': 'Noindex Pages', 'nofollow_meta': 'Nofollow Meta Pages',
+    'nofollow_internal': 'Internal Nofollow Links', 'hreflang_issue': 'Hreflang Issues',
+    'slow_response': 'Slow Pages (>3s)', 'redirect': 'Redirect Pages',
+    'no_schema_markup': 'No Schema Markup', 'no_lazy_loading': 'No Lazy Loading',
+    'missing_og_title': 'Missing OG Title', 'missing_og_description': 'Missing OG Description',
+    'missing_og_image': 'Missing OG Image',
+  };
 
   function issueAcc(id, sev, title, count, bodyHtml) {
     if (!count) return;
@@ -538,49 +558,19 @@ function renderDashboard(el) {
     html += '<div class="accordion-body">' + bodyHtml + '</div></div>';
   }
 
-  // Missing Title
-  if (s.pages_missing_title) {
-    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
-    (s.issue_groups || []).filter(function(g){return g.category==='missing_title'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
-    b += '</tbody></table>';
-    issueAcc('sec-miss-title','critical','Missing Title Tag',s.pages_missing_title,b);
-  }
-
-  // Missing Meta Description
-  if (s.pages_missing_meta) {
-    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
-    (s.issue_groups || []).filter(function(g){return g.category==='missing_meta_description'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
-    b += '</tbody></table>';
-    issueAcc('sec-miss-meta','critical','Missing Meta Description',s.pages_missing_meta,b);
-  }
-
-  // Missing H1
-  if (s.pages_missing_h1) {
-    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
-    (s.issue_groups || []).filter(function(g){return g.category==='missing_h1'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
-    b += '</tbody></table>';
-    issueAcc('sec-miss-h1','critical','Missing H1 Tag',s.pages_missing_h1,b);
-  }
-
-  // Missing Viewport
-  if (s.pages_missing_viewport) {
-    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
-    (s.issue_groups || []).filter(function(g){return g.category==='missing_viewport'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
-    b += '</tbody></table>';
-    issueAcc('sec-miss-vp','critical','Missing Viewport Meta',s.pages_missing_viewport,b);
-  }
-
-  // Placeholder Content
-  if (s.placeholder_pages.length) {
-    var b = '<table><thead><tr><th>URL</th><th>Found</th></tr></thead><tbody>';
-    s.placeholder_pages.forEach(function(p) {
-      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td>'+(p.content||[]).slice(0,3).map(function(c){return '<code style="font-size:11px;background:var(--surface);padding:2px 6px;border-radius:4px;margin-right:4px">'+esc(c.match)+'</code>';}).join('')+'</td></tr>';
+  // Render ALL issue_groups dynamically (sorted by severity then count)
+  var groups = (s.issue_groups || []).slice();
+  groups.forEach(function(g) {
+    var title = issueNames[g.category] || fmtType(g.category);
+    var b = '<table><thead><tr><th>URL</th><th>Detail</th></tr></thead><tbody>';
+    (g.pages || []).forEach(function(p) {
+      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td style="font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(p.detail||'')+'</td></tr>';
     });
     b += '</tbody></table>';
-    issueAcc('sec-placeholder','critical','Placeholder / Lorem Ipsum Content',s.placeholder_pages.length,b);
-  }
+    issueAcc('sec-ig-'+g.category, g.severity, title, g.count, b);
+  });
 
-  // Duplicate Titles
+  // Duplicate Titles (special rendering — groups, not flat list)
   if (s.duplicate_titles.length) {
     var b = '';
     s.duplicate_titles.forEach(function(g) {
@@ -591,7 +581,7 @@ function renderDashboard(el) {
     issueAcc('sec-dup-titles','warning','Duplicate Title Tags',s.duplicate_titles.length+' groups',b);
   }
 
-  // Duplicate Meta Descriptions
+  // Duplicate Meta Descriptions (special rendering — groups)
   if (s.duplicate_meta_descriptions.length) {
     var b = '';
     s.duplicate_meta_descriptions.forEach(function(g) {
@@ -602,102 +592,24 @@ function renderDashboard(el) {
     issueAcc('sec-dup-metas','warning','Duplicate Meta Descriptions',s.duplicate_meta_descriptions.length+' groups',b);
   }
 
-  // Missing Canonical Tag
-  if (s.pages_missing_canonical) {
-    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
-    (s.issue_groups || []).filter(function(g){return g.category==='missing_canonical'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
-    b += '</tbody></table>';
-    issueAcc('sec-miss-canonical','warning','Missing Canonical Tag',s.pages_missing_canonical,b);
-  }
-
-  // Canonical Issues (external, relative, not self-referencing)
+  // Canonical Issues (special — shows canonical URL + issues)
   if (s.canonical_issues.length) {
     var b = '<table><thead><tr><th>Page URL</th><th>Canonical URL</th><th>Issues</th></tr></thead><tbody>';
     s.canonical_issues.forEach(function(c) {
       b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+c.page_id+');return false">'+esc(c.url)+'</a></td><td class="url-cell">'+esc(c.canonical_url||'none')+'</td><td>'+(c.issues||[]).map(function(i){return '<span class="badge badge-warning">'+i+'</span> ';}).join('')+'</td></tr>';
     });
     b += '</tbody></table>';
-    issueAcc('sec-canonical','warning','Canonical Tag Issues',s.canonical_issues.length,b);
+    issueAcc('sec-canonical','warning','Canonical Tag Issues (detailed)',s.canonical_issues.length,b);
   }
 
-  // Noindex Pages
-  if (s.noindex_pages.length) {
-    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
-    s.noindex_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>';});
-    b += '</tbody></table>';
-    issueAcc('sec-noindex','warning','Noindex Pages',s.noindex_pages.length,b);
-  }
-
-  // Nofollow Pages
-  if (s.nofollow_pages.length) {
-    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
-    s.nofollow_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>';});
-    b += '</tbody></table>';
-    issueAcc('sec-nofollow','warning','Nofollow Meta Pages',s.nofollow_pages.length,b);
-  }
-
-  // Images Missing Alt
+  // Images Missing Alt (special — shows counts)
   if (s.pages_missing_alt.length) {
-    var b = '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
+    var b = '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Total</th></tr></thead><tbody>';
     s.pages_missing_alt.forEach(function(p) {
-      var sampleImg = p.sample_image_url ? '<a href="'+esc(p.sample_image_url)+'" target="_blank" style="font-size:11px;word-break:break-all;">'+esc(p.sample_image_url.split('/').pop().substring(0,40))+'</a>' : '—';
-      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.missing_count+'</span></td><td>'+sampleImg+'</td><td>'+p.total_images+'</td></tr>';
+      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.missing_count+'</span></td><td>'+p.total_images+'</td></tr>';
     });
     b += '</tbody></table>';
-    issueAcc('sec-img-noalt','warning','Images Missing Alt Attribute',s.total_images_missing_alt+' images on '+s.pages_missing_alt.length+' pages',b);
-  }
-
-  // Images Empty Alt
-  if (s.pages_empty_alt && s.pages_empty_alt.length) {
-    var b = '<table><thead><tr><th>Page URL</th><th>Empty Alt</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
-    s.pages_empty_alt.forEach(function(p) {
-      var sampleImg = p.sample_image_url ? '<a href="'+esc(p.sample_image_url)+'" target="_blank" style="font-size:11px;word-break:break-all;">'+esc(p.sample_image_url.split('/').pop().substring(0,40))+'</a>' : '—';
-      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.empty_count+'</span></td><td>'+sampleImg+'</td><td>'+p.total_images+'</td></tr>';
-    });
-    b += '</tbody></table>';
-    issueAcc('sec-img-emptyalt','warning','Images With Empty Alt Text',(s.total_images_empty_alt||0)+' images',b);
-  }
-
-  // Hreflang Issues
-  if (s.hreflang_issues.length) {
-    var b = '<table><thead><tr><th>Page URL</th><th>Issues</th></tr></thead><tbody>';
-    s.hreflang_issues.forEach(function(h){
-      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+h.page_id+');return false">'+esc(h.url)+'</a></td><td>'+(h.issues||[]).map(function(i){return '<div style="font-size:12px;color:var(--warning)">'+esc(i)+'</div>';}).join('')+'</td></tr>';
-    });
-    b += '</tbody></table>';
-    issueAcc('sec-hreflang','warning','Hreflang Issues',s.hreflang_issues.length,b);
-  }
-
-  // Thin Content
-  if (s.thin_content_pages.length) {
-    var b = '<table><thead><tr><th>URL</th><th>Word Count</th></tr></thead><tbody>';
-    s.thin_content_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.word_count+' words</span></td></tr>';});
-    b += '</tbody></table>';
-    issueAcc('sec-thin','warning','Thin Content (<300 words)',s.thin_content_pages.length,b);
-  }
-
-  // Low Text-to-HTML Ratio
-  if (s.low_text_ratio_pages.length) {
-    var b = '<table><thead><tr><th>URL</th><th>Ratio</th></tr></thead><tbody>';
-    s.low_text_ratio_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-critical">'+p.ratio+'%</span></td></tr>';});
-    b += '</tbody></table>';
-    issueAcc('sec-lowratio','warning','Low Text-to-HTML Ratio (<10%)',s.low_text_ratio_pages.length,b);
-  }
-
-  // Slow Pages
-  if (s.slow_pages.length) {
-    var b = '<table><thead><tr><th>URL</th><th>Response Time</th></tr></thead><tbody>';
-    s.slow_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.response_time.toFixed(2)+'s</span></td></tr>';});
-    b += '</tbody></table>';
-    issueAcc('sec-slow','warning','Slow Pages (>3s response)',s.slow_pages.length,b);
-  }
-
-  // No Schema Markup
-  if (s.pages_without_schema) {
-    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
-    (s.issue_groups || []).filter(function(g){return g.category==='no_schema_markup'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
-    b += '</tbody></table>';
-    issueAcc('sec-noschema','info','No Schema Markup',s.pages_without_schema,b);
+    issueAcc('sec-img-detail','warning','Images Missing Alt (detailed)',s.total_images_missing_alt+' images on '+s.pages_missing_alt.length+' pages',b);
   }
 
   // Status Code Breakdown

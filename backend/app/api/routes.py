@@ -169,7 +169,7 @@ async def stop_crawl(crawl_id: int, db: AsyncSession = Depends(get_db)):
 @router.get("/crawls/{crawl_id}/pages", response_model=list[PageSummary])
 async def list_pages(crawl_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Page).where(Page.crawl_id == crawl_id).order_by(Page.score.asc())
+        select(Page).where(Page.crawl_id == crawl_id).order_by(Page.id.asc())
     )
     pages = result.scalars().all()
     return [
@@ -189,7 +189,7 @@ async def list_pages(crawl_id: int, db: AsyncSession = Depends(get_db)):
 @router.get("/crawls/{crawl_id}/pages/table", response_model=list[PageTableRow])
 async def list_pages_table(crawl_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Page).where(Page.crawl_id == crawl_id).order_by(Page.score.asc())
+        select(Page).where(Page.crawl_id == crawl_id).order_by(Page.id.asc())
     )
     pages = result.scalars().all()
     return [
@@ -251,7 +251,7 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
 
     # Separate redirect pages — they should NOT be counted for content/SEO issues
     REDIRECT_CODES = {301, 302, 303, 307, 308}
-    content_pages = [p for p in pages if (p.status_code or 0) not in REDIRECT_CODES]
+    content_pages = [p for p in pages if (p.status_code or 0) >= 200 and (p.status_code or 0) < 300]
     content_total = len(content_pages) or 1  # avoid division by zero
 
     avg_score = sum(p.score or 0 for p in content_pages) / content_total
@@ -371,11 +371,19 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
     low_ratio = [{"url": p.url, "page_id": p.id, "ratio": p.code_to_text_ratio} for p in content_pages if p.code_to_text_ratio is not None and p.code_to_text_ratio < 10]
     placeholder_pages = [{"url": p.url, "page_id": p.id, "content": p.placeholder_content} for p in content_pages if p.has_placeholders]
 
-    # --- Structure (exclude redirects) ---
+    # --- Structure (exclude redirects and errors) ---
     missing_title = sum(1 for p in content_pages if not p.title)
     missing_meta = sum(1 for p in content_pages if not p.meta_description)
     missing_h1 = sum(1 for p in content_pages if p.h1_count == 0)
     missing_viewport = sum(1 for p in content_pages if not p.has_viewport_meta)
+    short_title = sum(1 for p in content_pages if p.title_length and 0 < p.title_length < 30)
+    long_title = sum(1 for p in content_pages if p.title_length and p.title_length > 60)
+    short_meta_desc = sum(1 for p in content_pages if p.meta_description_length and 0 < p.meta_description_length < 120)
+    long_meta_desc = sum(1 for p in content_pages if p.meta_description_length and p.meta_description_length > 160)
+    multiple_h1 = sum(1 for p in content_pages if p.h1_count and p.h1_count > 1)
+    missing_og_title = sum(1 for p in content_pages if not p.og_title)
+    missing_og_image = sum(1 for p in content_pages if not p.og_image)
+    no_lazy = sum(1 for p in content_pages if not p.has_lazy_loading)
 
     # --- Performance (all pages) ---
     avg_resp = sum(p.response_time or 0 for p in pages) / total
@@ -390,17 +398,20 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
     severity_map = {
         "missing_title": "critical", "missing_meta_description": "critical",
         "missing_h1": "critical", "missing_viewport": "critical",
-        "placeholder_content": "critical",
+        "placeholder_content": "critical", "http_error": "critical",
         "noindex": "warning", "nofollow_meta": "warning",
         "short_title": "warning", "long_title": "warning",
         "short_meta_description": "warning", "long_meta_description": "warning",
         "missing_canonical": "warning", "canonical_external": "warning",
-        "images_missing_alt": "warning", "thin_content": "warning",
-        "low_text_ratio": "warning", "multiple_h1": "warning",
-        "nofollow_internal": "warning", "hreflang_issue": "warning",
+        "canonical_mismatch": "warning", "canonical_relative": "warning",
+        "images_missing_alt": "warning", "images_empty_alt": "warning",
+        "thin_content": "warning", "low_text_ratio": "warning",
+        "multiple_h1": "warning", "nofollow_internal": "warning",
+        "hreflang_issue": "warning", "slow_response": "warning",
+        "redirect": "info",
         "no_schema_markup": "info", "no_lazy_loading": "info",
-        "missing_og_title": "info", "missing_og_image": "info",
-        "canonical_relative": "info", "high_text_ratio": "info",
+        "missing_og_title": "info", "missing_og_description": "info",
+        "missing_og_image": "info", "high_text_ratio": "info",
     }
     for itype, pages_list in issue_map.items():
         issue_groups.append(IssueGroup(
@@ -466,7 +477,7 @@ async def export_crawl_excel(crawl_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="No pages found")
 
     REDIRECT_CODES = {301, 302, 303, 307, 308}
-    content_pages = [p for p in pages if (p.status_code or 0) not in REDIRECT_CODES]
+    content_pages = [p for p in pages if (p.status_code or 0) >= 200 and (p.status_code or 0) < 300]
 
     wb = Workbook()
     header_font = Font(bold=True, color="FFFFFF", size=10)
@@ -696,7 +707,7 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
 
     total = len(pages)
     REDIRECT_CODES = {301, 302, 303, 307, 308}
-    content_pages = [p for p in pages if (p.status_code or 0) not in REDIRECT_CODES]
+    content_pages = [p for p in pages if (p.status_code or 0) >= 200 and (p.status_code or 0) < 300]
     content_total = len(content_pages) or 1
     avg_score = round(sum(p.score or 0 for p in content_pages) / content_total, 1)
     critical = sum(1 for p in content_pages for i in (p.issues or []) if i.get("severity") == "critical")
@@ -734,6 +745,16 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
         if p.meta_description:
             meta_groups[p.meta_description].append(p)
     dup_metas = {m: pgs for m, pgs in meta_groups.items() if len(pgs) > 1}
+
+    # Additional issue page lists
+    short_title_pages = [p for p in content_pages if p.title_length and 0 < p.title_length < 30]
+    long_title_pages = [p for p in content_pages if p.title_length and p.title_length > 60]
+    short_meta_pages = [p for p in content_pages if p.meta_description_length and 0 < p.meta_description_length < 120]
+    long_meta_pages = [p for p in content_pages if p.meta_description_length and p.meta_description_length > 160]
+    multi_h1_pages = [p for p in content_pages if p.h1_count and p.h1_count > 1]
+    missing_og_title_pages = [p for p in content_pages if not p.og_title]
+    missing_og_image_pages = [p for p in content_pages if not p.og_image]
+    no_lazy_pages = [p for p in content_pages if not p.has_lazy_loading]
 
     sitemaps = crawl.sitemaps_found or []
     sitemap_url_count = sum(sm.get("urls_count", 0) for sm in sitemaps)
@@ -1045,21 +1066,30 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
         ("Missing H1 Tag", len(missing_h1_pages), "Critical", RED),
         ("Missing Viewport", len(missing_viewport_pages), "Critical", RED),
         ("Placeholder Content", len(placeholder_pgs), "Critical", RED),
+        ("4xx Client Errors", len(error_4xx), "Critical", RED),
+        ("5xx Server Errors", len(error_5xx), "Critical", RED),
         ("Missing Canonical", len(missing_canonical_pages), "Warning", ORANGE),
         ("Canonical Issues", len(canon_issues), "Warning", ORANGE),
         ("Duplicate Titles", len(dup_titles), "Warning", ORANGE),
         ("Duplicate Metas", len(dup_metas), "Warning", ORANGE),
+        ("Short Title (<30 chars)", len(short_title_pages), "Warning", ORANGE),
+        ("Long Title (>60 chars)", len(long_title_pages), "Warning", ORANGE),
+        ("Short Meta Desc (<120)", len(short_meta_pages), "Warning", ORANGE),
+        ("Long Meta Desc (>160)", len(long_meta_pages), "Warning", ORANGE),
+        ("Multiple H1 Tags", len(multi_h1_pages), "Warning", ORANGE),
         ("Noindex Pages", len(noindex_pages), "Warning", ORANGE),
         ("Nofollow Pages", len(nofollow_pages), "Warning", ORANGE),
         ("Images Missing Alt", len(img_missing_alt), "Warning", ORANGE),
         ("Images Empty Alt", len(img_empty_alt), "Warning", ORANGE),
-        ("Thin Content", len(thin_pages), "Warning", ORANGE),
+        ("Thin Content (<300 words)", len(thin_pages), "Warning", ORANGE),
         ("Low Text/HTML Ratio", len(low_ratio_pages), "Warning", ORANGE),
         ("Slow Pages (>3s)", len(slow_pages), "Warning", ORANGE),
         ("Hreflang Issues", len(hreflang_issue_pages), "Warning", ORANGE),
-        ("4xx Errors", len(error_4xx), "Critical", RED),
-        ("5xx Errors", len(error_5xx), "Critical", RED),
+        ("Redirects", len(redirect_pages), "Info", PRIMARY_LIGHT),
         ("No Schema Markup", len(no_schema_pages), "Info", BLUE),
+        ("Missing OG Title", len(missing_og_title_pages), "Info", BLUE),
+        ("Missing OG Image", len(missing_og_image_pages), "Info", BLUE),
+        ("No Lazy Loading", len(no_lazy_pages), "Info", BLUE),
     ]
     # Filter to only non-zero
     active_issues = [(n, c, s, cl) for n, c, s, cl in issue_rows_data if c > 0]
@@ -1088,18 +1118,18 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
     # ════════════════════════════════════════════════════
     ch_num = 1
 
-    def issue_chapter(title, description, pages_list, cols, row_fn, severity_color=PRIMARY):
+    def issue_chapter(title, description, pages_list, cols, row_fn, severity_color=PRIMARY, max_rows=5):
         nonlocal ch_num
         if not pages_list:
             return
 
-        story.append(PageBreak())
+        story.append(Spacer(1, 14))
 
         # Colored severity bar
         sev_bar = Table(
-            [[Paragraph(f"<b>Chapter {ch_num}</b>", styles["Body8"]),
+            [[Paragraph(f"<b>{ch_num}. {title}</b>", styles["Body8"]),
               Paragraph(f"<b>{len(pages_list)} pages affected</b>", styles["Body8"])]],
-            colWidths=[page_w * 0.5, page_w * 0.5]
+            colWidths=[page_w * 0.6, page_w * 0.4]
         )
         sev_bar.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), severity_color),
@@ -1113,19 +1143,20 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
         ]))
         story.append(sev_bar)
 
-        story.append(Paragraph(title, styles["ChapterTitle"]))
+        # Paragraph description (flows naturally, no big whitespace)
+        story.append(Spacer(1, 4))
         story.append(Paragraph(description, styles["ChapterDesc"]))
         ch_num += 1
 
         d = [cols]
-        for pg in pages_list[:3]:
+        for pg in pages_list[:max_rows]:
             d.append(row_fn(pg))
-        if len(pages_list) > 3:
-            remaining = len(pages_list) - 3
+        if len(pages_list) > max_rows:
+            remaining = len(pages_list) - max_rows
             d.append([Paragraph(f"... and {remaining} more URLs. See Excel export for complete list.", styles["Tiny"])] + [""] * (len(cols) - 1))
         t = Table(d, colWidths=[int(page_w / len(cols))] * len(cols))
         t.setStyle(pro_table_style(severity_color))
-        story.append(t)
+        story.append(KeepTogether([t]))
 
     # ── Critical issues ──
     issue_chapter("Missing Title Tag",
@@ -1177,11 +1208,11 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
 
     # Duplicate Titles
     if dup_titles:
-        story.append(PageBreak())
+        story.append(Spacer(1, 14))
         sev_bar = Table(
-            [[Paragraph(f"<b>Chapter {ch_num}</b>", styles["Body8"]),
+            [[Paragraph(f"<b>{ch_num}. Duplicate Title Tags</b>", styles["Body8"]),
               Paragraph(f"<b>{len(dup_titles)} groups</b>", styles["Body8"])]],
-            colWidths=[page_w * 0.5, page_w * 0.5])
+            colWidths=[page_w * 0.6, page_w * 0.4])
         sev_bar.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), ORANGE),
             ("TEXTCOLOR", (0, 0), (-1, -1), WHITE),
@@ -1191,8 +1222,8 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
             ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("RIGHTPADDING", (1, 0), (1, 0), 10),
         ]))
         story.append(sev_bar)
-        story.append(Paragraph("Duplicate Title Tags", styles["ChapterTitle"]))
-        story.append(Paragraph("Multiple pages sharing the same title confuse search engines and dilute ranking potential.", styles["ChapterDesc"]))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("Multiple pages sharing the same title confuse search engines and dilute ranking potential. Each page should have a unique, descriptive title that accurately represents its content.", styles["ChapterDesc"]))
         ch_num += 1
         shown = 0
         for title_val, pgs in dup_titles.items():
@@ -1208,11 +1239,11 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
 
     # Duplicate Meta Descriptions
     if dup_metas:
-        story.append(PageBreak())
+        story.append(Spacer(1, 14))
         sev_bar = Table(
-            [[Paragraph(f"<b>Chapter {ch_num}</b>", styles["Body8"]),
+            [[Paragraph(f"<b>{ch_num}. Duplicate Meta Descriptions</b>", styles["Body8"]),
               Paragraph(f"<b>{len(dup_metas)} groups</b>", styles["Body8"])]],
-            colWidths=[page_w * 0.5, page_w * 0.5])
+            colWidths=[page_w * 0.6, page_w * 0.4])
         sev_bar.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), ORANGE),
             ("TEXTCOLOR", (0, 0), (-1, -1), WHITE),
@@ -1222,8 +1253,8 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
             ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("RIGHTPADDING", (1, 0), (1, 0), 10),
         ]))
         story.append(sev_bar)
-        story.append(Paragraph("Duplicate Meta Descriptions", styles["ChapterTitle"]))
-        story.append(Paragraph("Unique meta descriptions for each page improve click-through rates from search results.", styles["ChapterDesc"]))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("Unique meta descriptions for each page improve click-through rates from search results. When multiple pages share the same description, search engines may choose to show a generic snippet instead.", styles["ChapterDesc"]))
         ch_num += 1
         shown = 0
         for meta_val, pgs in dup_metas.items():
@@ -1277,10 +1308,45 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
                   slow_pages, ["URL", "Response Time"],
                   lambda pg: [url_p(pg.url, 50), p(f"{pg.response_time:.2f}s")], ORANGE)
 
+    issue_chapter("Short Title Tags (under 30 chars)",
+                  "Titles under 30 characters may not provide enough context for search engines or users. Aim for 30-60 characters.",
+                  short_title_pages, ["URL", "Title", "Length"],
+                  lambda pg: [url_p(pg.url, 35), p((pg.title or "")[:40]), p(str(pg.title_length or 0))], ORANGE)
+
+    issue_chapter("Long Title Tags (over 60 chars)",
+                  "Titles over 60 characters get truncated in search results, potentially cutting off important information.",
+                  long_title_pages, ["URL", "Title", "Length"],
+                  lambda pg: [url_p(pg.url, 35), p((pg.title or "")[:40] + "..."), p(str(pg.title_length or 0))], ORANGE)
+
+    issue_chapter("Short Meta Descriptions (under 120 chars)",
+                  "Short meta descriptions miss the opportunity to fully describe the page content and attract clicks.",
+                  short_meta_pages, ["URL", "Length"],
+                  lambda pg: [url_p(pg.url, 50), p(str(pg.meta_description_length or 0))], ORANGE)
+
+    issue_chapter("Long Meta Descriptions (over 160 chars)",
+                  "Meta descriptions over 160 characters get truncated in search results.",
+                  long_meta_pages, ["URL", "Length"],
+                  lambda pg: [url_p(pg.url, 50), p(str(pg.meta_description_length or 0))], ORANGE)
+
+    issue_chapter("Multiple H1 Tags",
+                  "Each page should have exactly one H1 tag. Multiple H1 tags dilute the topical focus and confuse search engines.",
+                  multi_h1_pages, ["URL", "H1 Count"],
+                  lambda pg: [url_p(pg.url, 50), p(str(pg.h1_count or 0))], ORANGE)
+
     # ── Info issues ──
     issue_chapter("No Schema Markup",
                   "Schema markup (structured data) enables rich snippets in search results, improving visibility and click-through rates.",
                   no_schema_pages, ["URL"],
+                  lambda pg: [url_p(pg.url)], BLUE)
+
+    issue_chapter("Missing OG Title",
+                  "Open Graph title tags control how pages appear when shared on social media. Missing OG titles may result in poor social previews.",
+                  missing_og_title_pages, ["URL"],
+                  lambda pg: [url_p(pg.url)], BLUE)
+
+    issue_chapter("Missing OG Image",
+                  "Pages without an Open Graph image tag will have no image preview when shared on social media, significantly reducing engagement.",
+                  missing_og_image_pages, ["URL"],
                   lambda pg: [url_p(pg.url)], BLUE)
 
     issue_chapter("Redirects",
@@ -1291,7 +1357,7 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
     # ════════════════════════════════════════════════════
     # ROBOTS & SITEMAPS
     # ════════════════════════════════════════════════════
-    story.append(PageBreak())
+    story.append(Spacer(1, 18))
     sev_bar = Table(
         [[Paragraph(f"<b>Chapter {ch_num}</b>", styles["Body8"]),
           Paragraph("<b>Technical</b>", styles["Body8"])]],
