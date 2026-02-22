@@ -667,16 +667,18 @@ async def export_crawl_excel(crawl_id: int, db: AsyncSession = Depends(get_db)):
 # ─── PDF Export ────────────────────────────────────────────
 @router.get("/crawls/{crawl_id}/export/pdf")
 async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
-    """Generate a PDF report with scorecards, pie charts, and 3 URL examples per issue."""
+    """Generate a state-of-the-art PDF report with colored backgrounds, charts, and professional layout."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
+        KeepTogether, Flowable
     )
-    from reportlab.graphics.shapes import Drawing, String, Wedge
-    from reportlab.graphics import renderPDF
+    from reportlab.graphics.shapes import Drawing, String, Wedge, Circle, Rect, Line
+    from reportlab.pdfgen import canvas as pdfcanvas
     import math
     from sqlalchemy.orm import selectinload
 
@@ -706,6 +708,7 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
     missing_meta_pages = [p for p in content_pages if not p.meta_description]
     missing_h1_pages = [p for p in content_pages if p.h1_count == 0]
     missing_viewport_pages = [p for p in content_pages if not p.has_viewport_meta]
+    missing_canonical_pages = [p for p in content_pages if p.canonical_issues and "missing" in p.canonical_issues]
     no_schema_pages = [p for p in content_pages if not p.has_schema_markup]
     noindex_pages = [p for p in content_pages if p.is_noindex]
     nofollow_pages = [p for p in content_pages if p.is_nofollow_meta]
@@ -718,6 +721,8 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
     placeholder_pgs = [p for p in content_pages if p.has_placeholders]
     slow_pages = [p for p in pages if p.response_time and p.response_time > 3]
     redirect_pages = [p for p in pages if (p.status_code or 0) in REDIRECT_CODES]
+    error_4xx = [p for p in pages if p.status_code and p.status_code >= 400 and p.status_code < 500]
+    error_5xx = [p for p in pages if p.status_code and p.status_code >= 500]
 
     title_groups = defaultdict(list)
     for p in content_pages:
@@ -730,356 +735,608 @@ async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
             meta_groups[p.meta_description].append(p)
     dup_metas = {m: pgs for m, pgs in meta_groups.items() if len(pgs) > 1}
 
-    # Sitemap URLs count
     sitemaps = crawl.sitemaps_found or []
     sitemap_url_count = sum(sm.get("urls_count", 0) for sm in sitemaps)
 
-    # Build PDF
+    # ── Color palette ──
+    PRIMARY = colors.HexColor("#6c5ce7")
+    PRIMARY_LIGHT = colors.HexColor("#a29bfe")
+    PRIMARY_DARK = colors.HexColor("#4834d4")
+    DARK = colors.HexColor("#2d3436")
+    DARK2 = colors.HexColor("#636e72")
+    WHITE = colors.white
+    LIGHT_BG = colors.HexColor("#f5f6fa")
+    CARD_BG = colors.HexColor("#fafbfc")
+    RED = colors.HexColor("#e74c3c")
+    RED_LIGHT = colors.HexColor("#fef0ef")
+    ORANGE = colors.HexColor("#e17055")
+    ORANGE_LIGHT = colors.HexColor("#fef5f0")
+    GREEN = colors.HexColor("#00b894")
+    GREEN_LIGHT = colors.HexColor("#edfcf5")
+    BLUE = colors.HexColor("#0984e3")
+    BLUE_LIGHT = colors.HexColor("#edf5fd")
+    PURPLE_LIGHT = colors.HexColor("#f3f0ff")
+    YELLOW = colors.HexColor("#fdcb6e")
+    GRAY = colors.HexColor("#b2bec3")
+    BORDER = colors.HexColor("#dfe6e9")
+
+    W = A4[0]
+    page_w = W - 30 * mm  # usable width
+
+    # ── Build PDF ──
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20*mm, bottomMargin=15*mm, leftMargin=15*mm, rightMargin=15*mm)
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * mm, bottomMargin=18 * mm, leftMargin=15 * mm, rightMargin=15 * mm)
     styles = getSampleStyleSheet()
 
-    accent = colors.HexColor("#6c5ce7")
-    accent2 = colors.HexColor("#a29bfe")
-    dark = colors.HexColor("#2d3436")
-    light_bg = colors.HexColor("#f8f9fa")
-    red = colors.HexColor("#ff6b6b")
-    green_c = colors.HexColor("#00b894")
-    blue_c = colors.HexColor("#0984e3")
-    orange_c = colors.HexColor("#e17055")
-    gray_c = colors.HexColor("#b2bec3")
+    # Custom styles
+    styles.add(ParagraphStyle("CoverTitle", parent=styles["Title"], fontSize=28, leading=34, textColor=WHITE, alignment=TA_CENTER, spaceAfter=6))
+    styles.add(ParagraphStyle("CoverSub", parent=styles["Normal"], fontSize=12, leading=16, textColor=colors.HexColor("#dcd6ff"), alignment=TA_CENTER))
+    styles.add(ParagraphStyle("CoverDate", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#b8b0e8"), alignment=TA_CENTER))
+    styles.add(ParagraphStyle("SectionTitle", parent=styles["Heading1"], fontSize=16, leading=20, textColor=PRIMARY_DARK, spaceBefore=18, spaceAfter=10))
+    styles.add(ParagraphStyle("SectionSub", parent=styles["Normal"], fontSize=9, leading=13, textColor=DARK2, spaceAfter=12))
+    styles.add(ParagraphStyle("ChapterTitle", parent=styles["Heading2"], fontSize=13, leading=17, textColor=PRIMARY, spaceBefore=10, spaceAfter=6))
+    styles.add(ParagraphStyle("ChapterDesc", parent=styles["Normal"], fontSize=8.5, leading=12, textColor=DARK2, spaceAfter=8))
+    styles.add(ParagraphStyle("Body9", parent=styles["Normal"], fontSize=9, leading=12, textColor=DARK))
+    styles.add(ParagraphStyle("Body8", parent=styles["Normal"], fontSize=8, leading=10, textColor=DARK))
+    styles.add(ParagraphStyle("Body7", parent=styles["Normal"], fontSize=7, leading=9, textColor=DARK))
+    styles.add(ParagraphStyle("Tiny", parent=styles["Normal"], fontSize=6.5, leading=8, textColor=DARK2))
+    styles.add(ParagraphStyle("FooterStyle", parent=styles["Normal"], fontSize=7, textColor=GRAY, alignment=TA_CENTER))
+    styles.add(ParagraphStyle("CardValue", parent=styles["Normal"], fontSize=22, leading=26, textColor=PRIMARY_DARK, alignment=TA_CENTER))
+    styles.add(ParagraphStyle("CardLabel", parent=styles["Normal"], fontSize=7.5, leading=10, textColor=DARK2, alignment=TA_CENTER))
+    styles.add(ParagraphStyle("ScoreGood", parent=styles["Normal"], fontSize=22, leading=26, textColor=GREEN, alignment=TA_CENTER))
+    styles.add(ParagraphStyle("ScoreOk", parent=styles["Normal"], fontSize=22, leading=26, textColor=ORANGE, alignment=TA_CENTER))
+    styles.add(ParagraphStyle("ScoreBad", parent=styles["Normal"], fontSize=22, leading=26, textColor=RED, alignment=TA_CENTER))
+    styles.add(ParagraphStyle("CritVal", parent=styles["Normal"], fontSize=22, leading=26, textColor=RED, alignment=TA_CENTER))
+    styles.add(ParagraphStyle("WarnVal", parent=styles["Normal"], fontSize=22, leading=26, textColor=ORANGE, alignment=TA_CENTER))
+    styles.add(ParagraphStyle("InfoVal", parent=styles["Normal"], fontSize=22, leading=26, textColor=BLUE, alignment=TA_CENTER))
 
-    styles.add(ParagraphStyle(name="SmallBody", parent=styles["Normal"], fontSize=7, leading=9))
-    styles.add(ParagraphStyle(name="TinyBody", parent=styles["Normal"], fontSize=6.5, leading=8))
-    styles.add(ParagraphStyle(name="SectionHead", parent=styles["Heading2"], fontSize=13, spaceAfter=6, spaceBefore=14, textColor=accent))
-    styles.add(ParagraphStyle(name="SubHead", parent=styles["Heading3"], fontSize=10, spaceAfter=4, spaceBefore=8))
-    styles.add(ParagraphStyle(name="ChapterIntro", parent=styles["Normal"], fontSize=9, leading=12, textColor=colors.HexColor("#555555"), spaceAfter=8))
-
-    dark_header_style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), dark),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTSIZE", (0, 1), (-1, -1), 7),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, light_bg]),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-    ])
-
-    def p(text, style="SmallBody"):
+    def p(text, style="Body7"):
         return Paragraph(str(text), styles[style])
 
-    def url_p(url, max_len=65):
-        t = url[:max_len] + ("..." if len(url) > max_len else "")
-        return Paragraph(t, styles["SmallBody"])
+    def url_p(url, max_len=60):
+        t = str(url)[:max_len] + ("..." if len(str(url)) > max_len else "")
+        return Paragraph(t, styles["Tiny"])
 
-    # ── Pie chart helper ──
-    def make_pie(data_items, width=200, height=150):
-        """data_items: list of (label, value, color)"""
+    # ── Table styles ──
+    def pro_table_style(accent_color=PRIMARY):
+        return TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), accent_color),
+            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 1), (-1, -1), 7.5),
+            ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, LIGHT_BG]),
+            ("TOPPADDING", (0, 0), (-1, 0), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            ("TOPPADDING", (0, 1), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, accent_color),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.3, BORDER),
+            ("LINEBELOW", (0, -1), (-1, -1), 0.5, accent_color),
+            ("ROUNDEDCORNERS", [4, 4, 4, 4]),
+        ])
+
+    # ── Donut chart ──
+    def make_donut(data_items, width=200, height=140, inner_ratio=0.55, title=""):
         d = Drawing(width, height)
-        total_val = sum(v for _, v, _ in data_items) or 1
-        cx, cy, r = width * 0.35, height * 0.5, min(width, height) * 0.3
+        total_val = sum(v for _, v, _ in data_items if v > 0) or 1
+        cx, cy = width * 0.32, height * 0.50
+        r_outer = min(width, height) * 0.32
+        r_inner = r_outer * inner_ratio
         start = 90
         for label, val, clr in data_items:
             if val <= 0:
                 continue
             extent = (val / total_val) * 360
-            w = Wedge(cx, cy, r, start - extent, start, fillColor=clr, strokeColor=colors.white, strokeWidth=1)
-            d.add(w)
+            w_o = Wedge(cx, cy, r_outer, start - extent, start, fillColor=clr, strokeColor=WHITE, strokeWidth=1.5)
+            d.add(w_o)
             start -= extent
+        # Inner white circle for donut effect
+        d.add(Wedge(cx, cy, r_inner, 0, 360, fillColor=WHITE, strokeColor=WHITE, strokeWidth=0))
+        # Center text
+        if title:
+            d.add(String(cx - len(title) * 2, cy - 3, title, fontSize=7, fillColor=DARK2, textAnchor="start"))
+
         # Legend
-        lx = width * 0.7
-        ly = height - 15
+        lx = width * 0.68
+        ly = height - 16
         for label, val, clr in data_items:
             if val <= 0:
                 continue
             pct = round(val / total_val * 100, 1)
-            w = Wedge(lx, ly + 3, 4, 0, 360, fillColor=clr, strokeColor=clr, strokeWidth=0)
-            d.add(w)
-            d.add(String(lx + 8, ly, f"{label}: {val} ({pct}%)", fontSize=7, fillColor=dark))
-            ly -= 12
+            d.add(Rect(lx, ly, 8, 8, fillColor=clr, strokeColor=clr, strokeWidth=0, rx=2, ry=2))
+            d.add(String(lx + 12, ly + 1, f"{label}", fontSize=7, fillColor=DARK))
+            d.add(String(lx + 12, ly - 8, f"{val} ({pct}%)", fontSize=6.5, fillColor=DARK2))
+            ly -= 22
+        return d
+
+    # ── Colored background row (for section headers) ──
+    class ColoredBlock(Flowable):
+        """A colored background block to wrap content visually."""
+        def __init__(self, w, h, color, radius=4):
+            Flowable.__init__(self)
+            self.w = w
+            self.h = h
+            self.color = color
+            self.radius = radius
+        def wrap(self, availW, availH):
+            return self.w, self.h
+        def draw(self):
+            self.canv.setFillColor(self.color)
+            self.canv.roundRect(0, 0, self.w, self.h, self.radius, fill=1, stroke=0)
+
+    # ── Horizontal bar chart ──
+    def make_bar_chart(data_items, width=460, bar_height=16, max_val=None):
+        """data_items: list of (label, value, color)"""
+        if not data_items:
+            return Spacer(1, 1)
+        if max_val is None:
+            max_val = max(v for _, v, _ in data_items) or 1
+        spacing = 6
+        total_h = len(data_items) * (bar_height + spacing) + 10
+        d = Drawing(width, total_h)
+        label_w = 140
+        bar_w = width - label_w - 50
+        y = total_h - bar_height - 4
+        for label, val, clr in data_items:
+            if val <= 0:
+                y -= bar_height + spacing
+                continue
+            d.add(String(0, y + 3, label, fontSize=7, fillColor=DARK))
+            bw = (val / max_val) * bar_w if max_val else 0
+            d.add(Rect(label_w, y, max(bw, 2), bar_height - 2, fillColor=clr, strokeColor=clr, strokeWidth=0, rx=3, ry=3))
+            d.add(String(label_w + bw + 4, y + 3, str(val), fontSize=7, fillColor=DARK2))
+            y -= bar_height + spacing
         return d
 
     story = []
-
-    # ═══════════════ COVER ═══════════════
-    story.append(Spacer(1, 30))
-    story.append(Paragraph("SEO Crawl Report", styles["Title"]))
     site_url = crawl.project.url if crawl.project else "N/A"
     site_name = crawl.project.name if crawl.project else "N/A"
-    story.append(Paragraph(f"<b>{site_name}</b> — {site_url}", styles["Normal"]))
-    story.append(Paragraph(f"Report generated: {crawl.completed_at or crawl.created_at}", styles["Normal"]))
-    story.append(Spacer(1, 20))
+    report_date = (crawl.completed_at or crawl.created_at or "N/A")
+    if hasattr(report_date, "strftime"):
+        report_date = report_date.strftime("%B %d, %Y at %H:%M")
 
-    # ═══════════════ SCORECARDS ═══════════════
-    story.append(Paragraph("Executive Summary", styles["SectionHead"]))
-    score_color = green_c if avg_score >= 70 else (orange_c if avg_score >= 40 else red)
-    summary_text = f"The crawl analyzed <b>{total}</b> pages. Average SEO score: <b>{avg_score}/100</b>. "
-    summary_text += f"Found <b>{critical}</b> critical, <b>{warnings_count}</b> warnings, <b>{info_count}</b> info items."
-    story.append(Paragraph(summary_text, styles["ChapterIntro"]))
-
-    sc_data = [
-        ["Pages Crawled", "Avg Score", "Critical", "Warnings", "Info", "Redirects"],
-        [str(total), str(avg_score), str(critical), str(warnings_count), str(info_count), str(len(redirect_pages))],
-    ]
-    t = Table(sc_data, colWidths=[80, 70, 70, 70, 70, 70])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), accent),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
-        ("BACKGROUND", (0, 1), (-1, -1), light_bg),
-        ("FONTSIZE", (0, 1), (-1, 1), 12),
-        ("TEXTCOLOR", (1, 1), (1, 1), score_color),
-        ("TEXTCOLOR", (2, 1), (2, 1), red),
-        ("TEXTCOLOR", (3, 1), (3, 1), orange_c),
+    # ════════════════════════════════════════════════════
+    # COVER PAGE — purple background
+    # ════════════════════════════════════════════════════
+    cover_bg = Table([[""]],
+        colWidths=[page_w + 4 * mm], rowHeights=[110 * mm])
+    cover_bg.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
     ]))
-    story.append(t)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 15 * mm))
+    story.append(cover_bg)
 
-    # ═══════════════ PIE CHARTS ═══════════════
-    story.append(Paragraph("Visual Overview", styles["SubHead"]))
+    # Overlay title (rendered on top via negative spacer)
+    story.append(Spacer(1, -95 * mm))
+    story.append(Paragraph("SEO Audit Report", styles["CoverTitle"]))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(f"<b>{site_name}</b>", styles["CoverSub"]))
+    story.append(Spacer(1, 2))
+    story.append(Paragraph(site_url, styles["CoverSub"]))
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(report_date, styles["CoverDate"]))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph("Generated by SEO Crawler Pro", styles["CoverDate"]))
 
-    # Pie 1: Crawled vs Sitemap URLs
-    pie1 = make_pie([
-        ("Crawled", total, accent),
-        ("In Sitemap", sitemap_url_count, green_c),
-    ], width=240, height=120)
+    story.append(Spacer(1, 45 * mm))
 
-    # Pie 2: Issue severity
-    pie2 = make_pie([
-        ("Critical", critical, red),
-        ("Warning", warnings_count, orange_c),
-        ("Info", info_count, blue_c),
-    ], width=240, height=120)
+    # ════════════════════════════════════════════════════
+    # PAGE 2 — EXECUTIVE SUMMARY
+    # ════════════════════════════════════════════════════
+    story.append(PageBreak())
+    story.append(Paragraph("Executive Summary", styles["SectionTitle"]))
 
-    pie_table = Table([[pie1, pie2]], colWidths=[250, 250])
-    pie_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
-    story.append(pie_table)
-    story.append(Spacer(1, 8))
+    score_style = "ScoreGood" if avg_score >= 70 else ("ScoreOk" if avg_score >= 40 else "ScoreBad")
 
-    # Pie 3: Status codes
-    status_groups = defaultdict(int)
+    # Scorecard row
+    def card_cell(value, label, val_style="CardValue"):
+        return Table(
+            [[Paragraph(str(value), styles[val_style])], [Paragraph(label, styles["CardLabel"])]],
+            colWidths=[page_w / 5 - 4],
+            rowHeights=[28, 14]
+        )
+
+    cards = Table([[
+        card_cell(avg_score, "SEO Score", score_style),
+        card_cell(total, "Pages Crawled"),
+        card_cell(critical, "Critical", "CritVal"),
+        card_cell(warnings_count, "Warnings", "WarnVal"),
+        card_cell(info_count, "Info", "InfoVal"),
+    ]], colWidths=[page_w / 5] * 5)
+    cards.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), CARD_BG),
+        ("ROUNDEDCORNERS", [6, 6, 6, 6]),
+        ("LINEBELOW", (0, 0), (-1, -1), 0, WHITE),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+    ]))
+    story.append(cards)
+    story.append(Spacer(1, 6))
+
+    # Summary sentence
+    summary_text = f"We crawled <b>{total}</b> pages on <b>{site_url}</b>. "
+    if avg_score >= 70:
+        summary_text += "The site is in <b>good shape</b> overall. "
+    elif avg_score >= 40:
+        summary_text += "The site has <b>several issues</b> that need attention. "
+    else:
+        summary_text += "The site has <b>significant SEO problems</b> requiring immediate action. "
+    summary_text += f"We identified <b>{critical}</b> critical issues, <b>{warnings_count}</b> warnings, and <b>{info_count}</b> informational items."
+    story.append(Paragraph(summary_text, styles["SectionSub"]))
+    story.append(Spacer(1, 6))
+
+    # ── Charts side by side ──
+    story.append(Paragraph("Visual Overview", styles["ChapterTitle"]))
+
+    donut1 = make_donut([
+        ("Critical", critical, RED),
+        ("Warning", warnings_count, ORANGE),
+        ("Info", info_count, BLUE),
+    ], width=230, height=130, title="Issues")
+
+    # Status code groups
+    sc_groups = defaultdict(int)
     for pg in pages:
         sc = pg.status_code or 0
-        if sc >= 200 and sc < 300:
-            status_groups["2xx"] += 1
-        elif sc >= 300 and sc < 400:
-            status_groups["3xx"] += 1
-        elif sc >= 400 and sc < 500:
-            status_groups["4xx"] += 1
-        elif sc >= 500:
-            status_groups["5xx"] += 1
-    pie3 = make_pie([
-        ("2xx OK", status_groups.get("2xx", 0), green_c),
-        ("3xx Redirect", status_groups.get("3xx", 0), accent2),
-        ("4xx Client Error", status_groups.get("4xx", 0), orange_c),
-        ("5xx Server Error", status_groups.get("5xx", 0), red),
-    ], width=300, height=130)
-    story.append(pie3)
-    story.append(Spacer(1, 12))
+        if 200 <= sc < 300: sc_groups["2xx"] += 1
+        elif 300 <= sc < 400: sc_groups["3xx"] += 1
+        elif 400 <= sc < 500: sc_groups["4xx"] += 1
+        elif sc >= 500: sc_groups["5xx"] += 1
 
-    # ═══════════════ ISSUE BREAKDOWN TABLE ═══════════════
-    story.append(Paragraph("Issue Breakdown", styles["SubHead"]))
-    issue_summary = [["Category", "Count", "Severity"]]
-    issue_rows = [
-        ("Missing Title", len(missing_title_pages), "Critical"),
-        ("Missing Meta Description", len(missing_meta_pages), "Critical"),
-        ("Missing H1", len(missing_h1_pages), "Critical"),
-        ("Missing Viewport", len(missing_viewport_pages), "Critical"),
-        ("Placeholder Content", len(placeholder_pgs), "Critical"),
-        ("Duplicate Titles", len(dup_titles), "Warning"),
-        ("Duplicate Meta Descriptions", len(dup_metas), "Warning"),
-        ("Canonical Issues", len(canon_issues), "Warning"),
-        ("Noindex Pages", len(noindex_pages), "Warning"),
-        ("Nofollow Pages", len(nofollow_pages), "Warning"),
-        ("Images Missing Alt", len(img_missing_alt), "Warning"),
-        ("Images Empty Alt", len(img_empty_alt), "Warning"),
-        ("Thin Content (<300 words)", len(thin_pages), "Warning"),
-        ("Low Text/HTML Ratio", len(low_ratio_pages), "Warning"),
-        ("Slow Pages (>3s)", len(slow_pages), "Warning"),
-        ("Hreflang Issues", len(hreflang_issue_pages), "Warning"),
-        ("No Schema Markup", len(no_schema_pages), "Info"),
+    donut2 = make_donut([
+        ("2xx OK", sc_groups.get("2xx", 0), GREEN),
+        ("3xx Redirect", sc_groups.get("3xx", 0), PRIMARY_LIGHT),
+        ("4xx Error", sc_groups.get("4xx", 0), ORANGE),
+        ("5xx Error", sc_groups.get("5xx", 0), RED),
+    ], width=230, height=130, title="Status")
+
+    charts_row = Table([[donut1, donut2]], colWidths=[page_w / 2, page_w / 2])
+    charts_row.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
+        ("ROUNDEDCORNERS", [6, 6, 6, 6]),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+    ]))
+    story.append(charts_row)
+    story.append(Spacer(1, 10))
+
+    # ── Crawled vs Sitemap mini cards ──
+    vs_data = Table([
+        [Paragraph("Crawled Pages", styles["CardLabel"]),
+         Paragraph("Sitemap URLs", styles["CardLabel"]),
+         Paragraph("Avg Response", styles["CardLabel"]),
+         Paragraph("Redirects", styles["CardLabel"])],
+        [Paragraph(f"<b>{total}</b>", styles["Body9"]),
+         Paragraph(f"<b>{sitemap_url_count}</b>", styles["Body9"]),
+         Paragraph(f"<b>{round(sum(p.response_time or 0 for p in content_pages) / content_total, 2)}s</b>", styles["Body9"]),
+         Paragraph(f"<b>{len(redirect_pages)}</b>", styles["Body9"])],
+    ], colWidths=[page_w / 4] * 4)
+    vs_data.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (-1, -1), WHITE),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+        ("ROUNDEDCORNERS", [4, 4, 4, 4]),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.3, BORDER),
+    ]))
+    story.append(vs_data)
+
+    # ════════════════════════════════════════════════════
+    # PAGE 3 — ISSUE BREAKDOWN
+    # ════════════════════════════════════════════════════
+    story.append(PageBreak())
+    story.append(Paragraph("Issue Breakdown", styles["SectionTitle"]))
+    story.append(Paragraph("All detected SEO issues ranked by severity. Focus on critical items first.", styles["SectionSub"]))
+
+    issue_rows_data = [
+        ("Missing Title Tag", len(missing_title_pages), "Critical", RED),
+        ("Missing Meta Description", len(missing_meta_pages), "Critical", RED),
+        ("Missing H1 Tag", len(missing_h1_pages), "Critical", RED),
+        ("Missing Viewport", len(missing_viewport_pages), "Critical", RED),
+        ("Placeholder Content", len(placeholder_pgs), "Critical", RED),
+        ("Missing Canonical", len(missing_canonical_pages), "Warning", ORANGE),
+        ("Canonical Issues", len(canon_issues), "Warning", ORANGE),
+        ("Duplicate Titles", len(dup_titles), "Warning", ORANGE),
+        ("Duplicate Metas", len(dup_metas), "Warning", ORANGE),
+        ("Noindex Pages", len(noindex_pages), "Warning", ORANGE),
+        ("Nofollow Pages", len(nofollow_pages), "Warning", ORANGE),
+        ("Images Missing Alt", len(img_missing_alt), "Warning", ORANGE),
+        ("Images Empty Alt", len(img_empty_alt), "Warning", ORANGE),
+        ("Thin Content", len(thin_pages), "Warning", ORANGE),
+        ("Low Text/HTML Ratio", len(low_ratio_pages), "Warning", ORANGE),
+        ("Slow Pages (>3s)", len(slow_pages), "Warning", ORANGE),
+        ("Hreflang Issues", len(hreflang_issue_pages), "Warning", ORANGE),
+        ("4xx Errors", len(error_4xx), "Critical", RED),
+        ("5xx Errors", len(error_5xx), "Critical", RED),
+        ("No Schema Markup", len(no_schema_pages), "Info", BLUE),
     ]
-    for name, count, sev in issue_rows:
-        if count > 0:
-            issue_summary.append([name, str(count), sev])
-    if len(issue_summary) > 1:
-        t = Table(issue_summary, colWidths=[250, 60, 80])
-        t.setStyle(dark_header_style)
+    # Filter to only non-zero
+    active_issues = [(n, c, s, cl) for n, c, s, cl in issue_rows_data if c > 0]
+
+    if active_issues:
+        # Bar chart
+        bar_data = [(n, c, cl) for n, c, s, cl in active_issues[:12]]
+        story.append(make_bar_chart(bar_data, width=page_w))
+        story.append(Spacer(1, 10))
+
+        # Table
+        tbl_data = [["Issue", "Count", "Severity"]]
+        for name, count, sev, clr in active_issues:
+            sev_color = "#e74c3c" if sev == "Critical" else ("#e17055" if sev == "Warning" else "#0984e3")
+            tbl_data.append([
+                Paragraph(name, styles["Body8"]),
+                Paragraph(f"<b>{count}</b>", styles["Body8"]),
+                Paragraph(f'<font color="{sev_color}"><b>{sev}</b></font>', styles["Body8"]),
+            ])
+        t = Table(tbl_data, colWidths=[page_w * 0.55, page_w * 0.2, page_w * 0.25])
+        t.setStyle(pro_table_style(PRIMARY))
         story.append(t)
 
-    # ═══════════════ ISSUE CHAPTERS (3 URL examples each) ═══════════════
+    # ════════════════════════════════════════════════════
+    # ISSUE DETAIL CHAPTERS (3 URL examples each)
+    # ════════════════════════════════════════════════════
     ch_num = 1
 
-    def issue_chapter(title, description, pages_list, cols, row_fn):
+    def issue_chapter(title, description, pages_list, cols, row_fn, severity_color=PRIMARY):
         nonlocal ch_num
         if not pages_list:
             return
+
         story.append(PageBreak())
-        story.append(Paragraph(f"Chapter {ch_num}: {title}", styles["SectionHead"]))
-        story.append(Paragraph(f"{len(pages_list)} affected. {description}", styles["ChapterIntro"]))
+
+        # Colored severity bar
+        sev_bar = Table(
+            [[Paragraph(f"<b>Chapter {ch_num}</b>", styles["Body8"]),
+              Paragraph(f"<b>{len(pages_list)} pages affected</b>", styles["Body8"])]],
+            colWidths=[page_w * 0.5, page_w * 0.5]
+        )
+        sev_bar.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), severity_color),
+            ("TEXTCOLOR", (0, 0), (-1, -1), WHITE),
+            ("ROUNDEDCORNERS", [6, 6, 0, 0]),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+            ("RIGHTPADDING", (1, 0), (1, 0), 10),
+        ]))
+        story.append(sev_bar)
+
+        story.append(Paragraph(title, styles["ChapterTitle"]))
+        story.append(Paragraph(description, styles["ChapterDesc"]))
         ch_num += 1
+
         d = [cols]
         for pg in pages_list[:3]:
             d.append(row_fn(pg))
         if len(pages_list) > 3:
             remaining = len(pages_list) - 3
-            d.append([p(f"... and {remaining} more. See Excel export for full list.")] + [""] * (len(cols) - 1))
-        t = Table(d, colWidths=[int(460 / len(cols))] * len(cols))
-        t.setStyle(dark_header_style)
+            d.append([Paragraph(f"... and {remaining} more URLs. See Excel export for complete list.", styles["Tiny"])] + [""] * (len(cols) - 1))
+        t = Table(d, colWidths=[int(page_w / len(cols))] * len(cols))
+        t.setStyle(pro_table_style(severity_color))
         story.append(t)
 
-    # Missing Title
+    # ── Critical issues ──
     issue_chapter("Missing Title Tag",
-                  "Every page needs a unique, descriptive title tag for search engines.",
+                  "Every page needs a unique, descriptive title tag. Search engines display this in results and use it as a primary ranking signal.",
                   missing_title_pages, ["URL"],
-                  lambda pg: [url_p(pg.url)])
+                  lambda pg: [url_p(pg.url)], RED)
 
-    # Missing Meta Description
     issue_chapter("Missing Meta Description",
-                  "Meta descriptions help improve click-through rates from search results.",
+                  "Meta descriptions appear in search results below the title. A compelling description improves click-through rates.",
                   missing_meta_pages, ["URL"],
-                  lambda pg: [url_p(pg.url)])
+                  lambda pg: [url_p(pg.url)], RED)
 
-    # Missing H1
     issue_chapter("Missing H1 Tag",
-                  "The H1 tag is the main heading and important for SEO structure.",
+                  "The H1 tag defines the main topic of the page. Every page should have exactly one H1 heading.",
                   missing_h1_pages, ["URL"],
-                  lambda pg: [url_p(pg.url)])
+                  lambda pg: [url_p(pg.url)], RED)
 
-    # Missing Viewport
     issue_chapter("Missing Viewport Meta",
-                  "Viewport meta is required for proper mobile rendering.",
+                  "Without a viewport meta tag, mobile devices won't render the page correctly. This directly impacts mobile rankings.",
                   missing_viewport_pages, ["URL"],
-                  lambda pg: [url_p(pg.url)])
+                  lambda pg: [url_p(pg.url)], RED)
 
-    # Placeholder Content
     issue_chapter("Placeholder / Lorem Ipsum Content",
-                  "Placeholder text indicates unfinished pages.",
-                  placeholder_pgs, ["URL", "Found Text"],
-                  lambda pg: [url_p(pg.url, 45), p(", ".join([(c.get("match") or "")[:25] for c in (pg.placeholder_content or [])[:2]]))])
+                  "Pages with placeholder text are unfinished and harm user experience and SEO.",
+                  placeholder_pgs, ["URL", "Detected Text"],
+                  lambda pg: [url_p(pg.url, 40), p(", ".join([(c.get("match") or "")[:30] for c in (pg.placeholder_content or [])[:2]]))], RED)
+
+    issue_chapter("4xx Client Errors",
+                  "Pages returning 4xx status codes (404 Not Found, 403 Forbidden, etc.) hurt user experience and waste crawl budget.",
+                  error_4xx, ["URL", "Status Code"],
+                  lambda pg: [url_p(pg.url, 50), p(str(pg.status_code))], RED)
+
+    issue_chapter("5xx Server Errors",
+                  "Server errors indicate infrastructure problems that prevent pages from loading.",
+                  error_5xx, ["URL", "Status Code"],
+                  lambda pg: [url_p(pg.url, 50), p(str(pg.status_code))], RED)
+
+    # ── Warning issues ──
+    issue_chapter("Missing Canonical Tag",
+                  "Pages without a canonical tag risk duplicate content issues. Every indexable page should declare its canonical URL.",
+                  missing_canonical_pages, ["URL"],
+                  lambda pg: [url_p(pg.url)], ORANGE)
+
+    issue_chapter("Canonical Tag Issues",
+                  "Incorrect canonical tags send conflicting signals to search engines about which version of a page to index.",
+                  [p_item for p_item in canon_issues if p_item.canonical_issues and "missing" not in p_item.canonical_issues],
+                  ["URL", "Canonical URL", "Issues"],
+                  lambda pg: [url_p(pg.url, 35), url_p(pg.canonical_url or "none", 30), p(", ".join(pg.canonical_issues or [])[:50])], ORANGE)
 
     # Duplicate Titles
     if dup_titles:
         story.append(PageBreak())
-        story.append(Paragraph(f"Chapter {ch_num}: Duplicate Titles", styles["SectionHead"]))
-        story.append(Paragraph(f"{len(dup_titles)} groups share identical titles.", styles["ChapterIntro"]))
+        sev_bar = Table(
+            [[Paragraph(f"<b>Chapter {ch_num}</b>", styles["Body8"]),
+              Paragraph(f"<b>{len(dup_titles)} groups</b>", styles["Body8"])]],
+            colWidths=[page_w * 0.5, page_w * 0.5])
+        sev_bar.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), ORANGE),
+            ("TEXTCOLOR", (0, 0), (-1, -1), WHITE),
+            ("ROUNDEDCORNERS", [6, 6, 0, 0]),
+            ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("RIGHTPADDING", (1, 0), (1, 0), 10),
+        ]))
+        story.append(sev_bar)
+        story.append(Paragraph("Duplicate Title Tags", styles["ChapterTitle"]))
+        story.append(Paragraph("Multiple pages sharing the same title confuse search engines and dilute ranking potential.", styles["ChapterDesc"]))
         ch_num += 1
         shown = 0
         for title_val, pgs in dup_titles.items():
             if shown >= 3:
                 break
-            story.append(Paragraph(f'<b>"{title_val[:70]}{"..." if len(title_val) > 70 else ""}"</b> — {len(pgs)} pages', styles["SmallBody"]))
+            story.append(Paragraph(f'<font color="#e17055"><b>"{title_val[:65]}{"..." if len(title_val) > 65 else ""}"</b></font> ({len(pgs)} pages)', styles["Body8"]))
             for pg in pgs[:3]:
-                story.append(Paragraph(f"  • {pg.url[:80]}", styles["TinyBody"]))
+                story.append(Paragraph(f"  {pg.url[:75]}", styles["Tiny"]))
             story.append(Spacer(1, 4))
             shown += 1
         if len(dup_titles) > 3:
-            story.append(Paragraph(f"... and {len(dup_titles) - 3} more groups. See Excel export.", styles["SmallBody"]))
+            story.append(Paragraph(f"... and {len(dup_titles) - 3} more groups. See Excel export.", styles["Tiny"]))
 
     # Duplicate Meta Descriptions
     if dup_metas:
         story.append(PageBreak())
-        story.append(Paragraph(f"Chapter {ch_num}: Duplicate Meta Descriptions", styles["SectionHead"]))
-        story.append(Paragraph(f"{len(dup_metas)} groups share identical meta descriptions.", styles["ChapterIntro"]))
+        sev_bar = Table(
+            [[Paragraph(f"<b>Chapter {ch_num}</b>", styles["Body8"]),
+              Paragraph(f"<b>{len(dup_metas)} groups</b>", styles["Body8"])]],
+            colWidths=[page_w * 0.5, page_w * 0.5])
+        sev_bar.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), ORANGE),
+            ("TEXTCOLOR", (0, 0), (-1, -1), WHITE),
+            ("ROUNDEDCORNERS", [6, 6, 0, 0]),
+            ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("RIGHTPADDING", (1, 0), (1, 0), 10),
+        ]))
+        story.append(sev_bar)
+        story.append(Paragraph("Duplicate Meta Descriptions", styles["ChapterTitle"]))
+        story.append(Paragraph("Unique meta descriptions for each page improve click-through rates from search results.", styles["ChapterDesc"]))
         ch_num += 1
         shown = 0
         for meta_val, pgs in dup_metas.items():
             if shown >= 3:
                 break
-            story.append(Paragraph(f'<b>"{meta_val[:70]}{"..." if len(meta_val) > 70 else ""}"</b> — {len(pgs)} pages', styles["SmallBody"]))
+            story.append(Paragraph(f'<font color="#e17055"><b>"{meta_val[:65]}{"..." if len(meta_val) > 65 else ""}"</b></font> ({len(pgs)} pages)', styles["Body8"]))
             for pg in pgs[:3]:
-                story.append(Paragraph(f"  • {pg.url[:80]}", styles["TinyBody"]))
+                story.append(Paragraph(f"  {pg.url[:75]}", styles["Tiny"]))
             story.append(Spacer(1, 4))
             shown += 1
         if len(dup_metas) > 3:
-            story.append(Paragraph(f"... and {len(dup_metas) - 3} more groups. See Excel export.", styles["SmallBody"]))
+            story.append(Paragraph(f"... and {len(dup_metas) - 3} more groups. See Excel export.", styles["Tiny"]))
 
-    # Canonical Issues
-    issue_chapter("Canonical Tag Issues",
-                  "Canonical tags help prevent duplicate content issues.",
-                  canon_issues, ["URL", "Canonical URL", "Issues"],
-                  lambda pg: [url_p(pg.url, 40), url_p(pg.canonical_url or "none", 35), p(", ".join(pg.canonical_issues or [])[:60])])
-
-    # Noindex
     issue_chapter("Noindex Pages",
-                  "These pages are blocked from search engine indexing.",
+                  "These pages tell search engines not to include them in search results. Verify this is intentional.",
                   noindex_pages, ["URL"],
-                  lambda pg: [url_p(pg.url)])
+                  lambda pg: [url_p(pg.url)], ORANGE)
 
-    # Nofollow
     issue_chapter("Nofollow Meta Pages",
-                  "Nofollow meta prevents link equity flow from these pages.",
+                  "The nofollow meta tag prevents search engines from following links on these pages, blocking link equity flow.",
                   nofollow_pages, ["URL"],
-                  lambda pg: [url_p(pg.url)])
+                  lambda pg: [url_p(pg.url)], ORANGE)
 
-    # Images Missing Alt
     issue_chapter("Images Missing Alt Attribute",
-                  "Alt text is critical for accessibility and image SEO.",
-                  img_missing_alt, ["URL", "Missing", "Total Imgs"],
-                  lambda pg: [url_p(pg.url, 45), str(pg.images_without_alt), str(pg.total_images)])
+                  "Alt text is essential for accessibility (screen readers) and helps search engines understand image content.",
+                  img_missing_alt, ["URL", "Missing", "Total"],
+                  lambda pg: [url_p(pg.url, 40), p(str(pg.images_without_alt)), p(str(pg.total_images))], ORANGE)
 
-    # Images Empty Alt
     issue_chapter("Images With Empty Alt",
-                  "Empty alt text provides no context to screen readers.",
-                  img_empty_alt, ["URL", "Empty", "Total Imgs"],
-                  lambda pg: [url_p(pg.url, 45), str(pg.images_with_empty_alt or 0), str(pg.total_images)])
+                  "Empty alt attributes provide no context. Decorative images should use alt=\"\" but content images need descriptive text.",
+                  img_empty_alt, ["URL", "Empty", "Total"],
+                  lambda pg: [url_p(pg.url, 40), p(str(pg.images_with_empty_alt or 0)), p(str(pg.total_images))], ORANGE)
 
-    # Hreflang Issues
     issue_chapter("Hreflang Issues",
-                  "Hreflang implementation issues affect international targeting.",
-                  hreflang_issue_pages, ["URL", "Issues"],
-                  lambda pg: [url_p(pg.url, 45), p("; ".join(pg.hreflang_issues or [])[:80])])
+                  "Hreflang tags tell search engines which language/region a page targets. Misconfigurations hurt international SEO.",
+                  hreflang_issue_pages, ["URL", "Issues Found"],
+                  lambda pg: [url_p(pg.url, 40), p("; ".join(pg.hreflang_issues or [])[:70])], ORANGE)
 
-    # Thin Content
-    issue_chapter("Thin Content (<300 words)",
-                  "Pages with very little content may not rank well.",
+    issue_chapter("Thin Content (under 300 words)",
+                  "Pages with very little text content provide limited value to users and typically rank poorly.",
                   thin_pages, ["URL", "Word Count"],
-                  lambda pg: [url_p(pg.url, 55), str(pg.word_count or 0)])
+                  lambda pg: [url_p(pg.url, 50), p(str(pg.word_count or 0))], ORANGE)
 
-    # Low Text Ratio
-    issue_chapter("Low Text-to-HTML Ratio",
-                  "Low ratio indicates pages are mostly code with little readable content.",
+    issue_chapter("Low Text-to-HTML Ratio (under 10%)",
+                  "A low ratio suggests pages are heavy on code and light on readable content.",
                   low_ratio_pages, ["URL", "Ratio"],
-                  lambda pg: [url_p(pg.url, 55), f"{pg.code_to_text_ratio}%"])
+                  lambda pg: [url_p(pg.url, 50), p(f"{pg.code_to_text_ratio}%")], ORANGE)
 
-    # Slow Pages
-    issue_chapter("Slow Pages (>3s response)",
-                  "Slow pages hurt user experience and search rankings.",
+    issue_chapter("Slow Pages (over 3s response)",
+                  "Page speed is a confirmed ranking factor. Pages loading over 3 seconds have higher bounce rates.",
                   slow_pages, ["URL", "Response Time"],
-                  lambda pg: [url_p(pg.url, 55), f"{pg.response_time:.2f}s"])
+                  lambda pg: [url_p(pg.url, 50), p(f"{pg.response_time:.2f}s")], ORANGE)
 
-    # No Schema
+    # ── Info issues ──
     issue_chapter("No Schema Markup",
-                  "Schema markup helps search engines understand page content.",
+                  "Schema markup (structured data) enables rich snippets in search results, improving visibility and click-through rates.",
                   no_schema_pages, ["URL"],
-                  lambda pg: [url_p(pg.url)])
+                  lambda pg: [url_p(pg.url)], BLUE)
 
-    # Redirects
     issue_chapter("Redirects",
-                  "Pages returning redirect status codes (301, 302, etc).",
+                  "Pages returning redirect status codes. Excessive redirects slow page loading and waste crawl budget.",
                   redirect_pages, ["URL", "Status Code"],
-                  lambda pg: [url_p(pg.url, 55), str(pg.status_code)])
+                  lambda pg: [url_p(pg.url, 50), p(str(pg.status_code))], PRIMARY_LIGHT)
 
-    # Robots & Sitemaps
+    # ════════════════════════════════════════════════════
+    # ROBOTS & SITEMAPS
+    # ════════════════════════════════════════════════════
     story.append(PageBreak())
-    story.append(Paragraph(f"Chapter {ch_num}: Robots.txt & Sitemaps", styles["SectionHead"]))
+    sev_bar = Table(
+        [[Paragraph(f"<b>Chapter {ch_num}</b>", styles["Body8"]),
+          Paragraph("<b>Technical</b>", styles["Body8"])]],
+        colWidths=[page_w * 0.5, page_w * 0.5])
+    sev_bar.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), DARK),
+        ("TEXTCOLOR", (0, 0), (-1, -1), WHITE),
+        ("ROUNDEDCORNERS", [6, 6, 0, 0]),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("RIGHTPADDING", (1, 0), (1, 0), 10),
+    ]))
+    story.append(sev_bar)
+    story.append(Paragraph("Robots.txt and Sitemaps", styles["ChapterTitle"]))
+
     robots_status = crawl.robots_txt_status or "unknown"
-    story.append(Paragraph(f"robots.txt: <b>{robots_status}</b>. {len(sitemaps)} sitemap(s) found with {sitemap_url_count} total URLs.", styles["ChapterIntro"]))
+    robots_color = "#00b894" if robots_status == "found" else "#e74c3c"
+    story.append(Paragraph(f'robots.txt: <font color="{robots_color}"><b>{robots_status.upper()}</b></font>. '
+                           f'{len(sitemaps)} sitemap(s) discovered containing {sitemap_url_count} URLs.', styles["ChapterDesc"]))
+
     if sitemaps:
-        d = [["Sitemap URL", "Type", "URLs Count"]]
+        sm_data = [["Sitemap URL", "Type", "URLs"]]
         for sm in sitemaps:
-            d.append([url_p(sm.get("url", "?"), 55), sm.get("type", "?"), str(sm.get("urls_count", 0))])
-        t = Table(d, colWidths=[300, 80, 80])
-        t.setStyle(dark_header_style)
+            sm_data.append([url_p(sm.get("url", "?"), 50), p(sm.get("type", "?")), p(str(sm.get("urls_count", 0)))])
+        t = Table(sm_data, colWidths=[page_w * 0.60, page_w * 0.22, page_w * 0.18])
+        t.setStyle(pro_table_style(DARK))
         story.append(t)
 
-    # Footer
-    story.append(Spacer(1, 30))
-    story.append(Paragraph("Generated by SEO Crawler Pro — ai.tudordaniel.ro", styles["SmallBody"]))
+    # ════════════════════════════════════════════════════
+    # FOOTER
+    # ════════════════════════════════════════════════════
+    story.append(Spacer(1, 20))
+
+    # Footer bar
+    footer_bar = Table(
+        [[Paragraph("Generated by <b>SEO Crawler Pro</b>  |  ai.tudordaniel.ro", styles["FooterStyle"])]],
+        colWidths=[page_w])
+    footer_bar.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
+        ("ROUNDEDCORNERS", [4, 4, 4, 4]),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BOX", (0, 0), (-1, -1), 0.3, BORDER),
+    ]))
+    story.append(footer_bar)
 
     doc.build(story)
     buf.seek(0)
