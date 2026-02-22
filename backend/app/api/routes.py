@@ -648,8 +648,8 @@ async def export_crawl_excel(crawl_id: int, db: AsyncSession = Depends(get_db)):
     # ── Redirects ──
     redir = [p for p in pages if (p.status_code or 0) in REDIRECT_CODES]
     add_issue_sheet("Redirects", redir,
-                    extra_cols=["Status Code"],
-                    extra_fn=lambda pg: [pg.status_code])
+                    extra_cols=["Status Code", "Redirect Target"],
+                    extra_fn=lambda pg: [pg.status_code, pg.redirect_target or ""])
 
     buf = io.BytesIO()
     wb.save(buf)

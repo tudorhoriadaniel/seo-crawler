@@ -108,6 +108,9 @@ class Page(Base):
     has_placeholders = Column(Boolean, default=False)
     placeholder_content = Column(JSON, nullable=True)
 
+    # Redirects
+    redirect_target = Column(String(2048), nullable=True)
+
     # Issues found
     issues = Column(JSON, nullable=True)
     score = Column(Integer, nullable=True)

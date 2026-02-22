@@ -122,11 +122,39 @@ class CrawlEngine:
                 hreflang_issues=result.get("hreflang_issues"),
                 has_placeholders=result.get("has_placeholders", False),
                 placeholder_content=result.get("placeholder_content"),
+                redirect_target=result.get("redirect_target"),
                 issues=result["issues"],
                 score=result["score"],
             )
             db.add(page)
             await db.commit()
+
+    async def _resolve_start_url(self):
+        """Follow redirects on the starting URL to find the real base domain.
+        E.g. www.example.com -> example.com: we crawl under example.com only."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.TIMEOUT,
+                follow_redirects=True,
+                verify=False,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; SEOCrawlerBot/1.0; +https://ai.tudordaniel.ro)"},
+            ) as client:
+                resp = await client.get(self.base_url)
+                final_url = str(resp.url).rstrip("/")
+                final_domain = urlparse(final_url).netloc
+
+                if final_domain != self.domain:
+                    logger.info(
+                        f"Start URL redirected: {self.base_url} ({self.domain}) "
+                        f"-> {final_url} ({final_domain})"
+                    )
+                    self.base_url = final_url
+                    self.domain = final_domain
+                elif final_url != self.base_url:
+                    logger.info(f"Start URL resolved to: {final_url}")
+                    self.base_url = final_url
+        except httpx.RequestError as e:
+            logger.warning(f"Could not resolve start URL: {e} — using original")
 
     async def run(self, resume_from_stopped: bool = False):
         """Start the crawl."""
@@ -141,6 +169,10 @@ class CrawlEngine:
         )
 
         try:
+            # Resolve the starting URL — follow redirects to find the real domain
+            await self._resolve_start_url()
+            logger.info(f"Resolved base domain: {self.domain}")
+
             if resume_from_stopped:
                 # Load already-visited URLs from DB so we don't re-crawl
                 async with async_session() as db:
@@ -175,11 +207,11 @@ class CrawlEngine:
                 sitemaps_found=sitemap_parser.sitemaps_found,
             )
 
-            # Seed the queue (only URLs not yet visited)
+            # Seed the queue — only URLs matching our resolved domain
             if self.base_url not in self.visited:
                 self.queue.put_nowait(self.base_url)
             for url in sitemap_urls[:self.MAX_PAGES]:
-                if url not in self.visited:
+                if url not in self.visited and urlparse(url).netloc == self.domain:
                     self.queue.put_nowait(url)
 
             logger.info(f"Queue seeded with {self.queue.qsize()} URLs. Starting workers...")
@@ -286,21 +318,75 @@ class CrawlEngine:
 
         original_status = resp_initial.status_code
 
-        # If it's a redirect, follow it to get the HTML but keep the original status
+        # If it's a redirect, record it but only follow if target is same domain
         if original_status in (301, 302, 303, 307, 308):
             redirect_target = resp_initial.headers.get("location", "")
             if redirect_target:
-                redirect_target = urljoin(url, redirect_target)
-            logger.info(f"URL {url} redirects ({original_status}) to {redirect_target}")
-            try:
-                resp = await client_follow.get(url)
-            except httpx.RequestError as e:
-                logger.warning(f"Follow redirect failed for {url}: {e}")
-                return
-        else:
-            resp = resp_initial
-            redirect_target = None
+                redirect_target = urljoin(url, redirect_target).split("#")[0].split("?")[0].rstrip("/")
 
+            response_time = time.monotonic() - start
+            logger.info(f"URL {url} redirects ({original_status}) to {redirect_target}")
+
+            # Save the redirect as a page record (no HTML analysis needed)
+            redirect_result = {
+                "url": url,
+                "status_code": original_status,
+                "response_time": response_time,
+                "content_length": 0,
+                "title": None, "title_length": 0,
+                "meta_description": None, "meta_description_length": 0,
+                "canonical_url": None, "canonical_issues": None,
+                "robots_meta": None,
+                "is_noindex": False, "is_nofollow_meta": False,
+                "h1_count": 0, "h1_texts": None,
+                "h2_count": 0, "h3_count": 0, "h4_count": 0, "h5_count": 0, "h6_count": 0,
+                "total_images": 0, "images_without_alt": 0, "images_without_alt_urls": None,
+                "images_with_empty_alt": 0, "images_with_empty_alt_urls": None,
+                "internal_links": 0, "external_links": 0,
+                "nofollow_links": 0, "nofollow_internal_links": None,
+                "broken_links": 0,
+                "has_schema_markup": False, "schema_types": None,
+                "has_viewport_meta": False,
+                "word_count": 0, "has_lazy_loading": False,
+                "code_to_text_ratio": None, "html_size": None, "text_size": None,
+                "og_title": None, "og_description": None, "og_image": None,
+                "has_hreflang": False, "hreflang_entries": None, "hreflang_issues": None,
+                "has_placeholders": False, "placeholder_content": None,
+                "redirect_target": redirect_target,
+                "issues": [{
+                    "severity": "warning",
+                    "type": "redirect",
+                    "message": f"URL redirects ({original_status}) to {redirect_target}"
+                }],
+                "score": 0,
+            }
+            try:
+                await self._save_page(redirect_result, "redirect")
+            except Exception as e:
+                logger.error(f"DB save failed for redirect {url}: {e}")
+
+            # If the redirect target is on our domain, add it to crawl queue
+            if redirect_target:
+                target_parsed = urlparse(redirect_target)
+                if target_parsed.netloc == self.domain and redirect_target not in self.visited:
+                    if len(self.visited) < self.MAX_PAGES:
+                        try:
+                            self.queue.put_nowait(redirect_target)
+                            logger.info(f"Queued redirect target (same domain): {redirect_target}")
+                        except asyncio.QueueFull:
+                            pass
+                else:
+                    logger.info(f"Skipped redirect target (off-domain): {redirect_target}")
+
+            # Update crawl progress and return — don't analyze redirect HTML
+            try:
+                await self._update_crawl(pages_crawled=len(self.visited))
+            except Exception:
+                pass
+            return
+
+        # Non-redirect: normal page processing
+        resp = resp_initial
         response_time = time.monotonic() - start
         content_type = resp.headers.get("content-type", "")
 
@@ -311,20 +397,9 @@ class CrawlEngine:
         html = resp.text
         logger.info(f"Got {len(html)} bytes from {url} (status {original_status})")
 
-        # Run SEO analysis — pass the ORIGINAL status code, not the final one
+        # Run SEO analysis
         analyzer = SEOAnalyzer(url, html, original_status, response_time)
         result = analyzer.analyze()
-
-        # Store redirect info if applicable
-        if redirect_target:
-            result["redirect_target"] = redirect_target
-            result.setdefault("issues", []).append({
-                "severity": "warning",
-                "type": "redirect",
-                "message": f"URL redirects ({original_status}) to {redirect_target}"
-            })
-            # Recalculate score with the new issue
-            result["score"] = max(0, (result.get("score") or 100) - 7)
 
         # Save to DB (each save uses its own session)
         try:
@@ -339,7 +414,7 @@ class CrawlEngine:
         except Exception as e:
             logger.error(f"Progress update failed: {e}")
 
-        # Discover new internal links
+        # Discover new internal links (only same domain)
         soup = BeautifulSoup(html, "lxml")
         discovered = 0
         for a_tag in soup.find_all("a", href=True):
