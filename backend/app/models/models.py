@@ -71,6 +71,7 @@ class Page(Base):
     images_without_alt = Column(Integer, default=0)
     images_without_alt_urls = Column(JSON, nullable=True)
     images_with_empty_alt = Column(Integer, default=0)
+    images_with_empty_alt_urls = Column(JSON, nullable=True)
 
     # Links
     internal_links = Column(Integer, default=0)

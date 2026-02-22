@@ -1,7 +1,9 @@
 """API routes for SEO Crawler."""
+import io
 import asyncio
 from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -247,18 +249,21 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
     total_images_empty_alt = 0
     for p in pages:
         if p.images_without_alt and p.images_without_alt > 0:
+            sample_img = (p.images_without_alt_urls or [None])[0]
             pages_missing_alt.append({
                 "url": p.url, "page_id": p.id,
                 "missing_count": p.images_without_alt,
                 "total_images": p.total_images,
-                "missing_urls": p.images_without_alt_urls or [],
+                "sample_image_url": sample_img,
             })
             total_images_missing += p.images_without_alt
         if p.images_with_empty_alt and p.images_with_empty_alt > 0:
+            sample_img = (p.images_with_empty_alt_urls or [None])[0] if hasattr(p, 'images_with_empty_alt_urls') and p.images_with_empty_alt_urls else None
             pages_empty_alt.append({
                 "url": p.url, "page_id": p.id,
                 "empty_count": p.images_with_empty_alt,
                 "total_images": p.total_images,
+                "sample_image_url": sample_img,
             })
             total_images_empty_alt += p.images_with_empty_alt
 
@@ -347,3 +352,238 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
         "pages_without_schema": no_schema,
         "issue_groups": issue_groups,
     }
+
+
+# ─── PDF Export ────────────────────────────────────────────
+@router.get("/crawls/{crawl_id}/export/pdf")
+async def export_crawl_pdf(crawl_id: int, db: AsyncSession = Depends(get_db)):
+    """Generate a PDF summary report for a crawl."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    )
+
+    from sqlalchemy.orm import selectinload
+
+    crawl_result = await db.execute(
+        select(Crawl).options(selectinload(Crawl.project)).where(Crawl.id == crawl_id)
+    )
+    crawl = crawl_result.scalar_one_or_none()
+    if not crawl:
+        raise HTTPException(status_code=404, detail="Crawl not found")
+
+    result = await db.execute(select(Page).where(Page.crawl_id == crawl_id))
+    pages = result.scalars().all()
+    if not pages:
+        raise HTTPException(status_code=404, detail="No pages found")
+
+    total = len(pages)
+    avg_score = round(sum(p.score or 0 for p in pages) / total, 1)
+    critical = sum(1 for p in pages for i in (p.issues or []) if i.get("severity") == "critical")
+    warnings = sum(1 for p in pages for i in (p.issues or []) if i.get("severity") == "warning")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20*mm, bottomMargin=15*mm, leftMargin=15*mm, rightMargin=15*mm)
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="SmallBody", parent=styles["Normal"], fontSize=8, leading=10))
+    styles.add(ParagraphStyle(name="SectionHead", parent=styles["Heading2"], fontSize=12, spaceAfter=6, spaceBefore=12, textColor=colors.HexColor("#6c5ce7")))
+    styles.add(ParagraphStyle(name="SubHead", parent=styles["Heading3"], fontSize=10, spaceAfter=4, spaceBefore=8))
+
+    story = []
+
+    # Title
+    story.append(Paragraph("SEO Crawl Report", styles["Title"]))
+    site_url = crawl.project.url if crawl.project else "N/A"
+    story.append(Paragraph(f"Site: {site_url}", styles["Normal"]))
+    story.append(Paragraph(f"Date: {crawl.completed_at or crawl.created_at}", styles["Normal"]))
+    story.append(Spacer(1, 8))
+
+    # Summary stats table
+    summary_data = [
+        ["Pages Crawled", "Avg Score", "Critical Issues", "Warnings"],
+        [str(total), str(avg_score), str(critical), str(warnings)],
+    ]
+    t = Table(summary_data, colWidths=[120, 100, 120, 100])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#6c5ce7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8f9fa")),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 10))
+
+    # Structure issues
+    story.append(Paragraph("Structure Issues", styles["SectionHead"]))
+    missing_title = sum(1 for p in pages if not p.title)
+    missing_meta = sum(1 for p in pages if not p.meta_description)
+    missing_h1 = sum(1 for p in pages if p.h1_count == 0)
+    structure_data = [
+        ["Issue", "Count"],
+        ["Missing Title", str(missing_title)],
+        ["Missing Meta Description", str(missing_meta)],
+        ["Missing H1", str(missing_h1)],
+        ["Missing Viewport", str(sum(1 for p in pages if not p.has_viewport_meta))],
+        ["No Schema Markup", str(sum(1 for p in pages if not p.has_schema_markup))],
+    ]
+    t = Table(structure_data, colWidths=[300, 80])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2d3436")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fa")]),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 8))
+
+    # Images issues
+    pages_with_missing = [(p.url, p.images_without_alt, (p.images_without_alt_urls or [None])[0]) for p in pages if p.images_without_alt and p.images_without_alt > 0]
+    pages_with_empty = [(p.url, p.images_with_empty_alt, (p.images_with_empty_alt_urls or [None])[0] if hasattr(p, 'images_with_empty_alt_urls') and p.images_with_empty_alt_urls else None) for p in pages if p.images_with_empty_alt and p.images_with_empty_alt > 0]
+
+    if pages_with_missing or pages_with_empty:
+        story.append(Paragraph("Image Alt Text Issues", styles["SectionHead"]))
+        if pages_with_missing:
+            story.append(Paragraph(f"Images Missing Alt Attribute ({sum(c for _, c, _ in pages_with_missing)} images)", styles["SubHead"]))
+            img_data = [["Page URL", "Count", "Sample Image URL"]]
+            for url, cnt, sample in pages_with_missing[:30]:
+                img_data.append([
+                    Paragraph(url[:60] + ("..." if len(url) > 60 else ""), styles["SmallBody"]),
+                    str(cnt),
+                    Paragraph((sample or "—")[:50], styles["SmallBody"]),
+                ])
+            t = Table(img_data, colWidths=[220, 40, 200])
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2d3436")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 6))
+
+        if pages_with_empty:
+            story.append(Paragraph(f"Images With Empty Alt ({sum(c for _, c, _ in pages_with_empty)} images)", styles["SubHead"]))
+            img_data = [["Page URL", "Count", "Sample Image URL"]]
+            for url, cnt, sample in pages_with_empty[:30]:
+                img_data.append([
+                    Paragraph(url[:60] + ("..." if len(url) > 60 else ""), styles["SmallBody"]),
+                    str(cnt),
+                    Paragraph((sample or "—")[:50], styles["SmallBody"]),
+                ])
+            t = Table(img_data, colWidths=[220, 40, 200])
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2d3436")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            story.append(t)
+
+    # All URLs table
+    story.append(PageBreak())
+    story.append(Paragraph("All URLs Overview", styles["SectionHead"]))
+
+    url_data = [["URL", "Status", "Score", "Title Len", "H1s", "Words", "Images", "No Alt", "Time"]]
+    for p in pages:
+        url_data.append([
+            Paragraph(p.url[:55] + ("..." if len(p.url) > 55 else ""), styles["SmallBody"]),
+            str(p.status_code or "?"),
+            str(p.score or "?"),
+            str(p.title_length or 0),
+            str(p.h1_count or 0),
+            str(p.word_count or 0),
+            str(p.total_images or 0),
+            str(p.images_without_alt or 0),
+            f"{p.response_time:.2f}s" if p.response_time else "?",
+        ])
+
+    t = Table(url_data, colWidths=[170, 35, 35, 40, 30, 40, 40, 35, 40])
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#6c5ce7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fa")]),
+    ]
+    # Color-code status codes
+    for i, p in enumerate(pages, 1):
+        sc = p.status_code or 0
+        if sc >= 500:
+            style_cmds.append(("TEXTCOLOR", (1, i), (1, i), colors.HexColor("#ff6b6b")))
+        elif sc >= 400:
+            style_cmds.append(("TEXTCOLOR", (1, i), (1, i), colors.HexColor("#e17055")))
+        elif sc >= 300:
+            style_cmds.append(("TEXTCOLOR", (1, i), (1, i), colors.HexColor("#0984e3")))
+        elif sc >= 200:
+            style_cmds.append(("TEXTCOLOR", (1, i), (1, i), colors.HexColor("#00b894")))
+
+    t.setStyle(TableStyle(style_cmds))
+    story.append(t)
+
+    # Canonical / Hreflang issues
+    canon_issues = [(p.url, p.canonical_url, p.canonical_issues) for p in pages if p.canonical_issues and len(p.canonical_issues) > 0]
+    hreflang_issues_list = [(p.url, p.hreflang_issues) for p in pages if p.hreflang_issues and len(p.hreflang_issues) > 0]
+
+    if canon_issues or hreflang_issues_list:
+        story.append(PageBreak())
+        story.append(Paragraph("Canonical & Hreflang Issues", styles["SectionHead"]))
+
+        if canon_issues:
+            story.append(Paragraph(f"Canonical Issues ({len(canon_issues)} pages)", styles["SubHead"]))
+            c_data = [["Page URL", "Canonical", "Issues"]]
+            for url, canon, issues in canon_issues[:30]:
+                c_data.append([
+                    Paragraph(url[:50], styles["SmallBody"]),
+                    Paragraph((canon or "none")[:50], styles["SmallBody"]),
+                    Paragraph(", ".join(issues or [])[:60], styles["SmallBody"]),
+                ])
+            t = Table(c_data, colWidths=[180, 150, 130])
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2d3436")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 8))
+
+        if hreflang_issues_list:
+            story.append(Paragraph(f"Hreflang Issues ({len(hreflang_issues_list)} pages)", styles["SubHead"]))
+            h_data = [["Page URL", "Issues"]]
+            for url, issues in hreflang_issues_list[:30]:
+                h_data.append([
+                    Paragraph(url[:55], styles["SmallBody"]),
+                    Paragraph("; ".join(issues or [])[:100], styles["SmallBody"]),
+                ])
+            t = Table(h_data, colWidths=[200, 260])
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2d3436")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            story.append(t)
+
+    # Footer note
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("Generated by SEO Crawler Pro — ai.tudordaniel.ro", styles["SmallBody"]))
+
+    doc.build(story)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=seo-report-crawl-{crawl_id}.pdf"},
+    )

@@ -75,6 +75,7 @@ class CrawlEngine:
                 images_without_alt=result["images_without_alt"],
                 images_without_alt_urls=result.get("images_without_alt_urls"),
                 images_with_empty_alt=result.get("images_with_empty_alt", 0),
+                images_with_empty_alt_urls=result.get("images_with_empty_alt_urls"),
                 internal_links=result["internal_links"],
                 external_links=result["external_links"],
                 nofollow_links=result.get("nofollow_links", 0),

@@ -12,3 +12,4 @@ robotexclusionrulesparser
 xmltodict
 validators
 greenlet
+reportlab

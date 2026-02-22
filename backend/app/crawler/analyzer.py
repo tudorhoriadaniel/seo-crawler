@@ -184,6 +184,8 @@ class SEOAnalyzer:
         without_alt = []
         with_empty_alt = 0
 
+        empty_alt_urls = []
+
         for img in images:
             alt = img.get("alt")
             src = img.get("src", img.get("data-src", img.get("data-lazy-src", "")))
@@ -191,6 +193,7 @@ class SEOAnalyzer:
                 without_alt.append(src)
             elif alt.strip() == "":
                 with_empty_alt += 1
+                empty_alt_urls.append(src)
 
         # Check role="img" elements for aria-label
         role_img_missing = 0
@@ -243,6 +246,7 @@ class SEOAnalyzer:
             "images_without_alt": len(without_alt),
             "images_without_alt_urls": without_alt[:20],  # cap at 20
             "images_with_empty_alt": with_empty_alt,
+            "images_with_empty_alt_urls": empty_alt_urls[:20],
         }
 
     # ─── Links ────────────────────────────────────────────────
@@ -382,6 +386,27 @@ class SEOAnalyzer:
             self_ref = any(h["href"].rstrip("/") == self.url.rstrip("/") for h in hreflang_entries)
             if not self_ref:
                 hreflang_issues.append("Hreflang set doesn't include self-referencing tag")
+
+        # ─── Canonical / Hreflang Conflict Detection ──────────
+        if hreflang_entries:
+            canonical = self.soup.find("link", attrs={"rel": "canonical"})
+            canonical_url = canonical.get("href", "").strip() if canonical else None
+            if canonical_url:
+                canon_norm = canonical_url.rstrip("/").split("?")[0].split("#")[0]
+                url_norm = self.url.rstrip("/").split("?")[0].split("#")[0]
+                # Conflict: canonical points elsewhere but page has hreflang
+                if canon_norm and canon_norm != url_norm:
+                    hreflang_issues.append(
+                        f"Canonical points to {canonical_url} but page has hreflang tags — conflicting signals"
+                    )
+            # Conflict: page has noindex + hreflang
+            robots = self.soup.find("meta", attrs={"name": re.compile(r"robots", re.I)})
+            if robots:
+                robots_content = robots.get("content", "").lower()
+                if "noindex" in robots_content:
+                    hreflang_issues.append(
+                        "Page has noindex meta but also hreflang tags — search engines will ignore hreflang"
+                    )
 
         for issue_msg in hreflang_issues:
             self.issues.append({"severity": "warning", "type": "hreflang_issue", "message": issue_msg})
