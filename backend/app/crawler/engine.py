@@ -174,12 +174,19 @@ class CrawlEngine:
 
     async def _worker(self):
         """Worker that processes URLs from the queue."""
+        # Use TWO clients: one that does NOT follow redirects (to capture 301/302),
+        # and one that does follow them (to get the final HTML).
         async with httpx.AsyncClient(
+            timeout=self.TIMEOUT,
+            follow_redirects=False,
+            verify=False,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; SEOCrawlerBot/1.0; +https://ai.tudordaniel.ro)"},
+        ) as client_nofollow, httpx.AsyncClient(
             timeout=self.TIMEOUT,
             follow_redirects=True,
             verify=False,
             headers={"User-Agent": "Mozilla/5.0 (compatible; SEOCrawlerBot/1.0; +https://ai.tudordaniel.ro)"},
-        ) as client:
+        ) as client_follow:
             while True:
                 url = await self.queue.get()
                 try:
@@ -195,7 +202,7 @@ class CrawlEngine:
                         continue
 
                     logger.info(f"Crawling [{len(self.visited)}]: {url}")
-                    await self._crawl_page(client, url)
+                    await self._crawl_page(client_nofollow, client_follow, url)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -203,14 +210,33 @@ class CrawlEngine:
                 finally:
                     self.queue.task_done()
 
-    async def _crawl_page(self, client: httpx.AsyncClient, url: str):
+    async def _crawl_page(self, client_nofollow: httpx.AsyncClient, client_follow: httpx.AsyncClient, url: str):
         """Fetch and analyze a single page."""
         start = time.monotonic()
+
+        # First request: no redirects, to capture the real status code
         try:
-            resp = await client.get(url)
+            resp_initial = await client_nofollow.get(url)
         except httpx.RequestError as e:
             logger.warning(f"Request failed for {url}: {e}")
             return
+
+        original_status = resp_initial.status_code
+
+        # If it's a redirect, follow it to get the HTML but keep the original status
+        if original_status in (301, 302, 303, 307, 308):
+            redirect_target = resp_initial.headers.get("location", "")
+            if redirect_target:
+                redirect_target = urljoin(url, redirect_target)
+            logger.info(f"URL {url} redirects ({original_status}) to {redirect_target}")
+            try:
+                resp = await client_follow.get(url)
+            except httpx.RequestError as e:
+                logger.warning(f"Follow redirect failed for {url}: {e}")
+                return
+        else:
+            resp = resp_initial
+            redirect_target = None
 
         response_time = time.monotonic() - start
         content_type = resp.headers.get("content-type", "")
@@ -220,11 +246,22 @@ class CrawlEngine:
             return
 
         html = resp.text
-        logger.info(f"Got {len(html)} bytes from {url} (status {resp.status_code})")
+        logger.info(f"Got {len(html)} bytes from {url} (status {original_status})")
 
-        # Run SEO analysis
-        analyzer = SEOAnalyzer(url, html, resp.status_code, response_time)
+        # Run SEO analysis — pass the ORIGINAL status code, not the final one
+        analyzer = SEOAnalyzer(url, html, original_status, response_time)
         result = analyzer.analyze()
+
+        # Store redirect info if applicable
+        if redirect_target:
+            result["redirect_target"] = redirect_target
+            result.setdefault("issues", []).append({
+                "severity": "warning",
+                "type": "redirect",
+                "message": f"URL redirects ({original_status}) to {redirect_target}"
+            })
+            # Recalculate score with the new issue
+            result["score"] = max(0, (result.get("score") or 100) - 7)
 
         # Save to DB (each save uses its own session)
         try:

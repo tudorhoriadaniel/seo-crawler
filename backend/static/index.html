@@ -262,40 +262,41 @@ function renderDashboard(el) {
   // Issue categories grid
   html += '<div class="card"><h3>Issue Overview</h3><div class="issue-cat">';
   var cats = [
-    { icon: '&#128221;', title: 'Missing Titles', count: s.pages_missing_title, sev: 'critical' },
-    { icon: '&#128203;', title: 'Missing Meta Desc', count: s.pages_missing_meta, sev: 'critical' },
-    { icon: '&#128292;', title: 'Missing H1', count: s.pages_missing_h1, sev: 'critical' },
-    { icon: '&#128241;', title: 'Missing Viewport', count: s.pages_missing_viewport, sev: 'critical' },
-    { icon: '&#128279;', title: 'Canonical Issues', count: s.canonical_issues.length, sev: 'warning' },
-    { icon: '&#128444;', title: 'Images No Alt', count: s.total_images_missing_alt, sev: 'warning' },
-    { icon: '&#128683;', title: 'Noindex Pages', count: s.noindex_pages.length, sev: 'warning' },
-    { icon: '&#128196;', title: 'Thin Content', count: s.thin_content_pages.length, sev: 'warning' },
-    { icon: '&#9889;', title: 'Slow Pages', count: s.slow_pages.length, sev: 'warning' },
-    { icon: '&#128269;', title: 'No Schema', count: s.pages_without_schema, sev: 'info' },
-    { icon: '&#128209;', title: 'Duplicate Titles', count: s.duplicate_titles.length, sev: 'warning' },
-    { icon: '&#128260;', title: 'Placeholder Content', count: s.placeholder_pages.length, sev: 'critical' },
+    { icon: '&#128221;', title: 'Missing Titles', count: s.pages_missing_title, sev: 'critical', target: 'sec-all-issues' },
+    { icon: '&#128203;', title: 'Missing Meta Desc', count: s.pages_missing_meta, sev: 'critical', target: 'sec-all-issues' },
+    { icon: '&#128292;', title: 'Missing H1', count: s.pages_missing_h1, sev: 'critical', target: 'sec-all-issues' },
+    { icon: '&#128241;', title: 'Missing Viewport', count: s.pages_missing_viewport, sev: 'critical', target: 'sec-all-issues' },
+    { icon: '&#128279;', title: 'Canonical Issues', count: s.canonical_issues.length, sev: 'warning', target: 'sec-canonical' },
+    { icon: '&#128444;', title: 'Images No Alt', count: s.total_images_missing_alt, sev: 'warning', target: 'sec-images' },
+    { icon: '&#128683;', title: 'Noindex Pages', count: s.noindex_pages.length, sev: 'warning', target: 'sec-indexability' },
+    { icon: '&#128196;', title: 'Thin Content', count: s.thin_content_pages.length, sev: 'warning', target: 'sec-content' },
+    { icon: '&#9889;', title: 'Slow Pages', count: s.slow_pages.length, sev: 'warning', target: 'sec-slow' },
+    { icon: '&#128269;', title: 'No Schema', count: s.pages_without_schema, sev: 'info', target: 'sec-all-issues' },
+    { icon: '&#128209;', title: 'Duplicate Titles', count: s.duplicate_titles.length, sev: 'warning', target: 'sec-dup-titles' },
+    { icon: '&#128260;', title: 'Placeholder Content', count: s.placeholder_pages.length, sev: 'critical', target: 'sec-content' },
   ];
   cats.forEach(function(c) {
-    html += '<div class="issue-cat-card"><div class="header"><span class="title">' + c.icon + ' ' + c.title + '</span><span class="badge badge-' + c.sev + '">' + c.count + '</span></div><div class="desc">' + (c.count === 0 ? 'No issues found' : c.count + ' issue' + (c.count > 1 ? 's' : '') + ' detected') + '</div></div>';
+    var onclick = c.count > 0 ? ' onclick="scrollToSec(\'' + c.target + '\')" style="cursor:pointer"' : '';
+    html += '<div class="issue-cat-card"' + onclick + '><div class="header"><span class="title">' + c.icon + ' ' + c.title + '</span><span class="badge badge-' + c.sev + '">' + c.count + '</span></div><div class="desc">' + (c.count === 0 ? 'No issues found' : c.count + ' issue' + (c.count > 1 ? 's' : '') + ' detected') + '</div></div>';
   });
   html += '</div></div>';
 
   // Duplicate Titles
   if (s.duplicate_titles.length) {
-    html += '<div class="card"><h3>Duplicate Titles <span class="badge badge-warning">' + s.duplicate_titles.length + ' groups</span></h3>';
+    html += '<div class="card" id="sec-dup-titles"><h3>Duplicate Titles <span class="badge badge-warning">' + s.duplicate_titles.length + ' groups</span></h3>';
     html += renderAccordionGroups(s.duplicate_titles);
     html += '</div>';
   }
 
   // Duplicate Meta Descriptions
   if (s.duplicate_meta_descriptions.length) {
-    html += '<div class="card"><h3>Duplicate Meta Descriptions <span class="badge badge-warning">' + s.duplicate_meta_descriptions.length + ' groups</span></h3>';
+    html += '<div class="card" id="sec-dup-metas"><h3>Duplicate Meta Descriptions <span class="badge badge-warning">' + s.duplicate_meta_descriptions.length + ' groups</span></h3>';
     html += renderAccordionGroups(s.duplicate_meta_descriptions);
     html += '</div>';
   }
 
   // Status Codes
-  html += '<div class="card"><h3>Status Code Breakdown</h3><div style="display:flex;gap:12px;flex-wrap:wrap;">';
+  html += '<div class="card" id="sec-status"><h3>Status Code Breakdown</h3><div style="display:flex;gap:12px;flex-wrap:wrap;">';
   (s.status_code_breakdown || []).forEach(function(c) {
     var color = c.status_code < 300 ? 'good' : c.status_code < 400 ? 'info' : c.status_code < 500 ? 'warning' : 'critical';
     html += '<div class="stat-card ' + color + '" style="min-width:100px;flex:0;"><div class="value">' + c.count + '</div><div class="label">HTTP ' + c.status_code + '</div></div>';
@@ -304,7 +305,7 @@ function renderDashboard(el) {
 
   // Canonical Issues
   if (s.canonical_issues.length) {
-    html += '<div class="card"><h3>Canonical Issues <span class="badge badge-warning">' + s.canonical_issues.length + '</span></h3>';
+    html += '<div class="card" id="sec-canonical"><h3>Canonical Issues <span class="badge badge-warning">' + s.canonical_issues.length + '</span></h3>';
     html += '<table><thead><tr><th>Page URL</th><th>Canonical URL</th><th>Issues</th></tr></thead><tbody>';
     s.canonical_issues.forEach(function(c) {
       html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + c.page_id + ');return false">' + esc(c.url) + '</a></td><td class="url-cell">' + esc(c.canonical_url || 'none') + '</td><td>' + (c.issues || []).map(function(i) { return '<span class="badge badge-warning">' + i + '</span> '; }).join('') + '</td></tr>';
@@ -314,7 +315,7 @@ function renderDashboard(el) {
 
   // Noindex/Nofollow
   if (s.noindex_pages.length || s.nofollow_pages.length) {
-    html += '<div class="card"><h3>Indexability Issues</h3>';
+    html += '<div class="card" id="sec-indexability"><h3>Indexability Issues</h3>';
     if (s.noindex_pages.length) {
       html += '<h4 style="margin:8px 0;color:var(--warning)">Noindex Pages (' + s.noindex_pages.length + ')</h4><table><thead><tr><th>URL</th></tr></thead><tbody>';
       s.noindex_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td></tr>'; });
@@ -330,7 +331,7 @@ function renderDashboard(el) {
 
   // Images Missing Alt
   if (s.pages_missing_alt.length || (s.pages_empty_alt && s.pages_empty_alt.length)) {
-    html += '<div class="card"><h3>Image Alt Text Issues</h3>';
+    html += '<div class="card" id="sec-images"><h3>Image Alt Text Issues</h3>';
     if (s.pages_missing_alt.length) {
       html += '<h4 style="margin:8px 0;color:var(--warning)">Missing Alt Attribute (' + s.total_images_missing_alt + ' images)</h4>';
       html += '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Total Images</th></tr></thead><tbody>';
@@ -362,7 +363,7 @@ function renderDashboard(el) {
 
   // Content Issues
   if (s.thin_content_pages.length || s.low_text_ratio_pages.length || s.placeholder_pages.length) {
-    html += '<div class="card"><h3>Content Issues</h3>';
+    html += '<div class="card" id="sec-content"><h3>Content Issues</h3>';
     if (s.thin_content_pages.length) {
       html += '<h4 style="margin:8px 0;color:var(--warning)">Thin Content (' + s.thin_content_pages.length + ' pages)</h4><table><thead><tr><th>URL</th><th>Word Count</th></tr></thead><tbody>';
       s.thin_content_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.word_count + ' words</span></td></tr>'; });
@@ -398,14 +399,14 @@ function renderDashboard(el) {
 
   // Slow Pages
   if (s.slow_pages.length) {
-    html += '<div class="card"><h3>Slow Pages (&gt;3s) <span class="badge badge-warning">' + s.slow_pages.length + '</span></h3>';
+    html += '<div class="card" id="sec-slow"><h3>Slow Pages (&gt;3s) <span class="badge badge-warning">' + s.slow_pages.length + '</span></h3>';
     html += '<table><thead><tr><th>URL</th><th>Response Time</th></tr></thead><tbody>';
     s.slow_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.response_time.toFixed(2) + 's</span></td></tr>'; });
     html += '</tbody></table></div>';
   }
 
   // All Issues Grouped
-  html += '<div class="card"><h3>All Issues by Type</h3>';
+  html += '<div class="card" id="sec-all-issues"><h3>All Issues by Type</h3>';
   (s.issue_groups || []).forEach(function(g) {
     html += '<div class="accordion"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-' + g.severity + '">' + g.severity + '</span><span style="font-size:13px;font-weight:600;">' + fmtType(g.category) + '</span><span style="font-size:12px;color:var(--text2)">' + g.count + ' page' + (g.count > 1 ? 's' : '') + '</span></div><span class="chevron">&#9654;</span></div>';
     html += '<div class="accordion-body"><table><thead><tr><th>URL</th><th>Detail</th></tr></thead><tbody>';
@@ -439,6 +440,11 @@ function toggleAcc(header) {
 }
 
 function fmtType(type) { return type.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); }); }
+
+function scrollToSec(id) {
+  var el = document.getElementById(id);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 // ─── Pages List ──────────────────────────────────────
 function renderPages(el) {
