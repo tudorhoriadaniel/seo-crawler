@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+sqlalchemy
+aiosqlite
+httpx
+beautifulsoup4
+lxml
+pydantic
+python-multipart
+aiofiles
+robotexclusionrulesparser
+xmltodict
+validators
+greenlet

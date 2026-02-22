@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEO Crawler Pro — ai.tudordaniel.ro</title>
+<style>
+:root {
+  --bg: #0f1117; --surface: #1a1d27; --surface2: #242836;
+  --border: #2e3347; --text: #e4e6f0; --text2: #9499b3;
+  --accent: #6c5ce7; --accent2: #a29bfe;
+  --green: #00cec9; --red: #ff6b6b; --orange: #fdcb6e; --blue: #74b9ff;
+  --critical: #ff6b6b; --warning: #fdcb6e; --info: #74b9ff;
+  --radius: 12px; --radius-sm: 8px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+a { color: var(--accent2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 0; position: sticky; top: 0; z-index: 100; backdrop-filter: blur(10px); }
+header .container { display: flex; align-items: center; justify-content: space-between; }
+.logo { font-size: 20px; font-weight: 700; color: var(--accent2); display: flex; align-items: center; gap: 8px; }
+.logo svg { width: 28px; height: 28px; }
+nav { display: flex; gap: 8px; }
+nav button { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); padding: 6px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; transition: all .2s; }
+nav button:hover, nav button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+.card h3 { font-size: 15px; color: var(--text2); margin-bottom: 12px; text-transform: uppercase; letter-spacing: .5px; }
+
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; text-align: center; }
+.stat-card .value { font-size: 28px; font-weight: 700; }
+.stat-card .label { font-size: 12px; color: var(--text2); margin-top: 4px; }
+.stat-card.critical .value { color: var(--critical); }
+.stat-card.warning .value { color: var(--warning); }
+.stat-card.info .value { color: var(--info); }
+.stat-card.good .value { color: var(--green); }
+
+.score-ring { width: 80px; height: 80px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; margin: 0 auto 8px; }
+.score-good { background: rgba(0,206,201,.15); color: var(--green); border: 3px solid var(--green); }
+.score-ok { background: rgba(253,203,110,.15); color: var(--orange); border: 3px solid var(--orange); }
+.score-bad { background: rgba(255,107,107,.15); color: var(--red); border: 3px solid var(--red); }
+
+.form-row { display: flex; gap: 10px; margin-bottom: 16px; }
+.form-row input { flex: 1; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: var(--radius-sm); font-size: 14px; }
+.form-row input:focus { outline: none; border-color: var(--accent); }
+.btn { background: var(--accent); color: #fff; border: none; padding: 10px 20px; border-radius: var(--radius-sm); cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
+.btn:hover { background: var(--accent2); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-sm { padding: 4px 12px; font-size: 12px; }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text2); }
+.btn-outline:hover { border-color: var(--accent); color: var(--accent2); }
+.btn-danger { background: var(--red); }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+.badge-critical { background: rgba(255,107,107,.15); color: var(--critical); }
+.badge-warning { background: rgba(253,203,110,.15); color: var(--warning); }
+.badge-info { background: rgba(116,185,255,.15); color: var(--info); }
+.badge-good { background: rgba(0,206,201,.15); color: var(--green); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 8px 12px; color: var(--text2); border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+tr:hover { background: var(--surface2); }
+.url-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.accordion { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; overflow: hidden; }
+.accordion-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; background: var(--surface2); transition: background .2s; }
+.accordion-header:hover { background: var(--surface); }
+.accordion-header .left { display: flex; align-items: center; gap: 10px; }
+.accordion-body { padding: 0; max-height: 0; overflow: hidden; transition: max-height .3s, padding .3s; }
+.accordion-body.open { padding: 12px 16px; max-height: 2000px; }
+.chevron { transition: transform .2s; font-size: 12px; color: var(--text2); }
+.chevron.open { transform: rotate(90deg); }
+
+.spinner { width: 40px; height: 40px; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin: 40px auto; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.pulse { animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+
+.empty { text-align: center; padding: 40px; color: var(--text2); }
+
+.issue-cat { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.issue-cat-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; transition: all .2s; }
+.issue-cat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.issue-cat-card .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.issue-cat-card .title { font-size: 13px; font-weight: 600; }
+.issue-cat-card .desc { font-size: 12px; color: var(--text2); }
+
+.sitemap-list { display: flex; flex-direction: column; gap: 8px; }
+.sitemap-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface2); border-radius: var(--radius-sm); font-size: 13px; }
+.sitemap-item .url { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 12px; }
+.sitemap-item .meta { display: flex; gap: 8px; align-items: center; color: var(--text2); font-size: 11px; }
+
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .form-row { flex-direction: column; }
+  .issue-cat { grid-template-columns: 1fr; }
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      SEO Crawler Pro
+    </div>
+    <nav id="nav"></nav>
+  </div>
+</header>
+
+<div class="container" id="app"></div>
+
+<script>
+const API = '/api';
+let state = { view: 'home', projects: [], crawl: null, summary: null, pages: [], pageDetail: null, pollTimer: null };
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!res.ok) throw new Error('API ' + res.status);
+  return res.json();
+}
+
+function navigate(view, data) {
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+  if (data) Object.assign(state, data);
+  state.view = view;
+  render();
+}
+
+function render() {
+  const app = document.getElementById('app');
+  const nav = document.getElementById('nav');
+  nav.innerHTML = '<button class="' + (state.view === 'home' ? 'active' : '') + '" onclick="navigate(\'home\')">Projects</button>';
+  switch (state.view) {
+    case 'home': renderHome(app); break;
+    case 'crawling': renderCrawling(app); break;
+    case 'dashboard': renderDashboard(app); break;
+    case 'pages': renderPages(app); break;
+    case 'detail': renderDetail(app); break;
+  }
+}
+
+// ─── Home ────────────────────────────────────────────
+async function renderHome(el) {
+  el.innerHTML = '<div class="card"><h3>New Crawl</h3><div class="form-row"><input id="site-name" placeholder="Project name (e.g. My Website)"><input id="site-url" placeholder="https://example.com" value="https://"><button class="btn" onclick="startCrawl()">Crawl</button></div></div><div class="card"><h3>Recent Projects</h3><div id="projects-list"><div class="spinner"></div></div></div>';
+  try {
+    const projects = await api('/projects');
+    const list = document.getElementById('projects-list');
+    if (!projects.length) { list.innerHTML = '<div class="empty">No projects yet. Start your first crawl above.</div>'; return; }
+    list.innerHTML = '<table><thead><tr><th>Name</th><th>URL</th><th>Created</th><th></th></tr></thead><tbody>' +
+      projects.map(function(p) { return '<tr><td><strong>' + esc(p.name) + '</strong></td><td class="url-cell">' + esc(p.url) + '</td><td>' + new Date(p.created_at).toLocaleDateString() + '</td><td><button class="btn btn-sm" onclick="viewProject(' + p.id + ')">Crawls</button> <button class="btn btn-sm btn-outline" onclick="recrawl(' + p.id + ')">Re-crawl</button> <button class="btn btn-sm btn-danger" onclick="deleteProject(' + p.id + ')">Delete</button></td></tr>'; }).join('') +
+      '</tbody></table>';
+  } catch (e) { document.getElementById('projects-list').innerHTML = '<div class="empty">Error loading projects</div>'; }
+}
+
+async function startCrawl() {
+  var name = document.getElementById('site-name').value.trim();
+  var url = document.getElementById('site-url').value.trim();
+  if (!name || !url || url === 'https://') return alert('Enter project name and URL');
+  try {
+    var project = await api('/projects', { method: 'POST', body: JSON.stringify({ name: name, url: url }) });
+    var crawl = await api('/crawls', { method: 'POST', body: JSON.stringify({ project_id: project.id }) });
+    navigate('crawling', { crawl: crawl });
+    pollCrawl(crawl.id);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function recrawl(projectId) {
+  try {
+    var crawl = await api('/crawls', { method: 'POST', body: JSON.stringify({ project_id: projectId }) });
+    navigate('crawling', { crawl: crawl });
+    pollCrawl(crawl.id);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function viewProject(projectId) {
+  try {
+    var crawls = await api('/projects/' + projectId + '/crawls');
+    if (crawls.length === 0) return alert('No crawls yet');
+    var latest = crawls[0];
+    if (latest.status === 'completed') {
+      var results = await Promise.all([api('/crawls/' + latest.id + '/summary'), api('/crawls/' + latest.id + '/pages')]);
+      navigate('dashboard', { crawl: latest, summary: results[0], pages: results[1] });
+    } else if (latest.status === 'running' || latest.status === 'pending') {
+      navigate('crawling', { crawl: latest });
+      pollCrawl(latest.id);
+    } else { alert('Last crawl failed. Try re-crawling.'); }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function deleteProject(id) {
+  if (!confirm('Delete this project and all its crawls?')) return;
+  await api('/projects/' + id, { method: 'DELETE' });
+  navigate('home');
+}
+
+// ─── Crawling ────────────────────────────────────────
+function renderCrawling(el) {
+  var c = state.crawl;
+  el.innerHTML = '<div class="card" style="text-align:center;padding:40px;"><div class="spinner"></div><h2 style="margin-top:20px" class="pulse">Crawling website...</h2><p style="color:var(--text2);margin-top:8px;">Status: <strong>' + c.status + '</strong></p><p style="color:var(--text2);">Pages crawled: <strong id="crawl-count">' + c.pages_crawled + '</strong></p></div>';
+}
+
+function pollCrawl(crawlId) {
+  state.pollTimer = setInterval(async function() {
+    try {
+      var c = await api('/crawls/' + crawlId);
+      state.crawl = c;
+      var el = document.getElementById('crawl-count');
+      if (el) el.textContent = c.pages_crawled;
+      if (c.status === 'completed') {
+        clearInterval(state.pollTimer); state.pollTimer = null;
+        var results = await Promise.all([api('/crawls/' + c.id + '/summary'), api('/crawls/' + c.id + '/pages')]);
+        navigate('dashboard', { crawl: c, summary: results[0], pages: results[1] });
+      } else if (c.status === 'failed') {
+        clearInterval(state.pollTimer); state.pollTimer = null;
+        alert('Crawl failed.'); navigate('home');
+      }
+    } catch (e) { console.error(e); }
+  }, 2000);
+}
+
+// ─── Dashboard ───────────────────────────────────────
+function renderDashboard(el) {
+  var s = state.summary;
+  var scoreClass = s.avg_score >= 70 ? 'score-good' : s.avg_score >= 40 ? 'score-ok' : 'score-bad';
+
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><h2>Crawl Dashboard</h2><div style="display:flex;gap:8px;"><button class="btn btn-sm btn-outline" onclick="navigate(\'pages\')">All Pages</button><button class="btn btn-sm btn-outline" onclick="navigate(\'home\')">Back</button></div></div>';
+
+  // Stats
+  html += '<div class="stats-grid">';
+  html += '<div class="stat-card"><div class="score-ring ' + scoreClass + '">' + s.avg_score + '</div><div class="label">Avg Score</div></div>';
+  html += '<div class="stat-card"><div class="value">' + s.total_pages + '</div><div class="label">Pages Crawled</div></div>';
+  html += '<div class="stat-card critical"><div class="value">' + s.critical_issues + '</div><div class="label">Critical Issues</div></div>';
+  html += '<div class="stat-card warning"><div class="value">' + s.warnings + '</div><div class="label">Warnings</div></div>';
+  html += '<div class="stat-card info"><div class="value">' + (s.info_issues || 0) + '</div><div class="label">Info</div></div>';
+  html += '<div class="stat-card"><div class="value">' + s.avg_response_time + 's</div><div class="label">Avg Response</div></div>';
+  html += '</div>';
+
+  // Issue categories grid
+  html += '<div class="card"><h3>Issue Overview</h3><div class="issue-cat">';
+  var cats = [
+    { icon: '&#128221;', title: 'Missing Titles', count: s.pages_missing_title, sev: 'critical' },
+    { icon: '&#128203;', title: 'Missing Meta Desc', count: s.pages_missing_meta, sev: 'critical' },
+    { icon: '&#128292;', title: 'Missing H1', count: s.pages_missing_h1, sev: 'critical' },
+    { icon: '&#128241;', title: 'Missing Viewport', count: s.pages_missing_viewport, sev: 'critical' },
+    { icon: '&#128279;', title: 'Canonical Issues', count: s.canonical_issues.length, sev: 'warning' },
+    { icon: '&#128444;', title: 'Images No Alt', count: s.total_images_missing_alt, sev: 'warning' },
+    { icon: '&#128683;', title: 'Noindex Pages', count: s.noindex_pages.length, sev: 'warning' },
+    { icon: '&#128196;', title: 'Thin Content', count: s.thin_content_pages.length, sev: 'warning' },
+    { icon: '&#9889;', title: 'Slow Pages', count: s.slow_pages.length, sev: 'warning' },
+    { icon: '&#128269;', title: 'No Schema', count: s.pages_without_schema, sev: 'info' },
+    { icon: '&#128209;', title: 'Duplicate Titles', count: s.duplicate_titles.length, sev: 'warning' },
+    { icon: '&#128260;', title: 'Placeholder Content', count: s.placeholder_pages.length, sev: 'critical' },
+  ];
+  cats.forEach(function(c) {
+    html += '<div class="issue-cat-card"><div class="header"><span class="title">' + c.icon + ' ' + c.title + '</span><span class="badge badge-' + c.sev + '">' + c.count + '</span></div><div class="desc">' + (c.count === 0 ? 'No issues found' : c.count + ' issue' + (c.count > 1 ? 's' : '') + ' detected') + '</div></div>';
+  });
+  html += '</div></div>';
+
+  // Duplicate Titles
+  if (s.duplicate_titles.length) {
+    html += '<div class="card"><h3>Duplicate Titles <span class="badge badge-warning">' + s.duplicate_titles.length + ' groups</span></h3>';
+    html += renderAccordionGroups(s.duplicate_titles);
+    html += '</div>';
+  }
+
+  // Duplicate Meta Descriptions
+  if (s.duplicate_meta_descriptions.length) {
+    html += '<div class="card"><h3>Duplicate Meta Descriptions <span class="badge badge-warning">' + s.duplicate_meta_descriptions.length + ' groups</span></h3>';
+    html += renderAccordionGroups(s.duplicate_meta_descriptions);
+    html += '</div>';
+  }
+
+  // Status Codes
+  html += '<div class="card"><h3>Status Code Breakdown</h3><div style="display:flex;gap:12px;flex-wrap:wrap;">';
+  (s.status_code_breakdown || []).forEach(function(c) {
+    var color = c.status_code < 300 ? 'good' : c.status_code < 400 ? 'info' : c.status_code < 500 ? 'warning' : 'critical';
+    html += '<div class="stat-card ' + color + '" style="min-width:100px;flex:0;"><div class="value">' + c.count + '</div><div class="label">HTTP ' + c.status_code + '</div></div>';
+  });
+  html += '</div></div>';
+
+  // Canonical Issues
+  if (s.canonical_issues.length) {
+    html += '<div class="card"><h3>Canonical Issues <span class="badge badge-warning">' + s.canonical_issues.length + '</span></h3>';
+    html += '<table><thead><tr><th>Page URL</th><th>Canonical URL</th><th>Issues</th></tr></thead><tbody>';
+    s.canonical_issues.forEach(function(c) {
+      html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + c.page_id + ');return false">' + esc(c.url) + '</a></td><td class="url-cell">' + esc(c.canonical_url || 'none') + '</td><td>' + (c.issues || []).map(function(i) { return '<span class="badge badge-warning">' + i + '</span> '; }).join('') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+
+  // Noindex/Nofollow
+  if (s.noindex_pages.length || s.nofollow_pages.length) {
+    html += '<div class="card"><h3>Indexability Issues</h3>';
+    if (s.noindex_pages.length) {
+      html += '<h4 style="margin:8px 0;color:var(--warning)">Noindex Pages (' + s.noindex_pages.length + ')</h4><table><thead><tr><th>URL</th></tr></thead><tbody>';
+      s.noindex_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td></tr>'; });
+      html += '</tbody></table>';
+    }
+    if (s.nofollow_pages.length) {
+      html += '<h4 style="margin:12px 0 8px;color:var(--warning)">Nofollow Meta Pages (' + s.nofollow_pages.length + ')</h4><table><thead><tr><th>URL</th></tr></thead><tbody>';
+      s.nofollow_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td></tr>'; });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+  }
+
+  // Images Missing Alt
+  if (s.pages_missing_alt.length) {
+    html += '<div class="card"><h3>Images Missing Alt Text <span class="badge badge-warning">' + s.total_images_missing_alt + ' images</span></h3>';
+    html += '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Total</th></tr></thead><tbody>';
+    s.pages_missing_alt.forEach(function(p) {
+      html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.missing_count + '</span></td><td>' + p.total_images + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+
+  // Hreflang Issues
+  if (s.hreflang_issues.length) {
+    html += '<div class="card"><h3>Hreflang Issues <span class="badge badge-warning">' + s.hreflang_issues.length + '</span></h3>';
+    html += '<table><thead><tr><th>Page URL</th><th>Issues</th></tr></thead><tbody>';
+    s.hreflang_issues.forEach(function(h) {
+      html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + h.page_id + ');return false">' + esc(h.url) + '</a></td><td>' + (h.issues || []).map(function(i) { return '<div style="font-size:12px;color:var(--warning)">' + esc(i) + '</div>'; }).join('') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+
+  // Content Issues
+  if (s.thin_content_pages.length || s.low_text_ratio_pages.length || s.placeholder_pages.length) {
+    html += '<div class="card"><h3>Content Issues</h3>';
+    if (s.thin_content_pages.length) {
+      html += '<h4 style="margin:8px 0;color:var(--warning)">Thin Content (' + s.thin_content_pages.length + ' pages)</h4><table><thead><tr><th>URL</th><th>Word Count</th></tr></thead><tbody>';
+      s.thin_content_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.word_count + ' words</span></td></tr>'; });
+      html += '</tbody></table>';
+    }
+    if (s.low_text_ratio_pages.length) {
+      html += '<h4 style="margin:12px 0 8px;color:var(--warning)">Low Text-to-HTML Ratio (' + s.low_text_ratio_pages.length + ' pages)</h4><table><thead><tr><th>URL</th><th>Ratio</th></tr></thead><tbody>';
+      s.low_text_ratio_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-critical">' + p.ratio + '%</span></td></tr>'; });
+      html += '</tbody></table>';
+    }
+    if (s.placeholder_pages.length) {
+      html += '<h4 style="margin:12px 0 8px;color:var(--critical)">Placeholder / Lorem Ipsum (' + s.placeholder_pages.length + ' pages)</h4><table><thead><tr><th>URL</th><th>Found</th></tr></thead><tbody>';
+      s.placeholder_pages.forEach(function(p) {
+        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td>' + (p.content || []).slice(0, 3).map(function(c) { return '<code style="font-size:11px;background:var(--surface);padding:2px 6px;border-radius:4px;margin-right:4px">' + esc(c.match) + '</code>'; }).join('') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+  }
+
+  // Robots & Sitemaps
+  html += '<div class="card"><h3>Robots.txt & Sitemaps</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
+  html += '<div><h4 style="margin-bottom:8px;">robots.txt</h4><div class="sitemap-item"><span>Status</span><span class="badge ' + (s.robots_txt_status === 'found' ? 'badge-good' : 'badge-critical') + '">' + (s.robots_txt_status || 'unknown') + '</span></div></div>';
+  html += '<div><h4 style="margin-bottom:8px;">Sitemaps Found</h4><div class="sitemap-list">';
+  if (s.sitemaps_found && s.sitemaps_found.length) {
+    s.sitemaps_found.forEach(function(sm) {
+      html += '<div class="sitemap-item"><span class="url">' + esc(sm.url) + '</span><span class="meta"><span class="badge badge-info">' + sm.type + '</span><span>' + (sm.urls_count || 0) + ' URLs</span></span></div>';
+    });
+  } else {
+    html += '<div style="color:var(--text2);font-size:13px;">No sitemaps detected</div>';
+  }
+  html += '</div></div></div></div>';
+
+  // Slow Pages
+  if (s.slow_pages.length) {
+    html += '<div class="card"><h3>Slow Pages (&gt;3s) <span class="badge badge-warning">' + s.slow_pages.length + '</span></h3>';
+    html += '<table><thead><tr><th>URL</th><th>Response Time</th></tr></thead><tbody>';
+    s.slow_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.response_time.toFixed(2) + 's</span></td></tr>'; });
+    html += '</tbody></table></div>';
+  }
+
+  // All Issues Grouped
+  html += '<div class="card"><h3>All Issues by Type</h3>';
+  (s.issue_groups || []).forEach(function(g) {
+    html += '<div class="accordion"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-' + g.severity + '">' + g.severity + '</span><span style="font-size:13px;font-weight:600;">' + fmtType(g.category) + '</span><span style="font-size:12px;color:var(--text2)">' + g.count + ' page' + (g.count > 1 ? 's' : '') + '</span></div><span class="chevron">&#9654;</span></div>';
+    html += '<div class="accordion-body"><table><thead><tr><th>URL</th><th>Detail</th></tr></thead><tbody>';
+    g.pages.slice(0, 20).forEach(function(p) {
+      html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td style="font-size:12px;color:var(--text2)">' + esc(p.detail) + '</td></tr>';
+    });
+    if (g.count > 20) html += '<tr><td colspan="2" style="color:var(--text2);font-size:12px;">...and ' + (g.count - 20) + ' more</td></tr>';
+    html += '</tbody></table></div></div>';
+  });
+  html += '</div>';
+
+  el.innerHTML = html;
+}
+
+function renderAccordionGroups(groups) {
+  var html = '';
+  groups.forEach(function(g) {
+    html += '<div class="accordion"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-warning">' + g.count + 'x</span><span style="font-size:13px;">' + esc(g.value.substring(0, 80)) + (g.value.length > 80 ? '...' : '') + '</span></div><span class="chevron">&#9654;</span></div>';
+    html += '<div class="accordion-body"><table><thead><tr><th>URL</th></tr></thead><tbody>';
+    g.pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td></tr>'; });
+    html += '</tbody></table></div></div>';
+  });
+  return html;
+}
+
+function toggleAcc(header) {
+  var body = header.nextElementSibling;
+  var chev = header.querySelector('.chevron');
+  body.classList.toggle('open');
+  chev.classList.toggle('open');
+}
+
+function fmtType(type) { return type.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); }); }
+
+// ─── Pages List ──────────────────────────────────────
+function renderPages(el) {
+  var pages = state.pages;
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><h2>All Pages (' + pages.length + ')</h2><button class="btn btn-sm btn-outline" onclick="navigate(\'dashboard\')">Back to Dashboard</button></div>';
+  html += '<div class="card"><table><thead><tr><th>URL</th><th>Status</th><th>Score</th><th>Issues</th><th>Response</th><th></th></tr></thead><tbody>';
+  pages.forEach(function(p) {
+    var sc = (p.score || 0) >= 70 ? 'badge-good' : (p.score || 0) >= 40 ? 'badge-warning' : 'badge-critical';
+    var stc = (p.status_code || 0) < 300 ? 'badge-good' : (p.status_code || 0) < 400 ? 'badge-info' : 'badge-critical';
+    html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge ' + stc + '">' + (p.status_code || '?') + '</span></td><td><span class="badge ' + sc + '">' + (p.score || '?') + '</span></td><td>' + p.issues_count + '</td><td>' + (p.response_time ? p.response_time.toFixed(2) + 's' : '?') + '</td><td><button class="btn btn-sm btn-outline" onclick="loadPage(' + p.id + ')">Details</button></td></tr>';
+  });
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+}
+
+// ─── Page Detail ─────────────────────────────────────
+async function loadPage(pageId) {
+  try {
+    var page = await api('/pages/' + pageId);
+    navigate('detail', { pageDetail: page });
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+function renderDetail(el) {
+  var p = state.pageDetail;
+  if (!p) return;
+  var sc = (p.score || 0) >= 70 ? 'score-good' : (p.score || 0) >= 40 ? 'score-ok' : 'score-bad';
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><h2 style="font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">' + esc(p.url) + '</h2><button class="btn btn-sm btn-outline" onclick="navigate(\'dashboard\')">Back</button></div>';
+
+  html += '<div class="stats-grid">';
+  html += '<div class="stat-card"><div class="score-ring ' + sc + '">' + (p.score || '?') + '</div><div class="label">Score</div></div>';
+  html += '<div class="stat-card"><div class="value">' + (p.status_code || '?') + '</div><div class="label">Status</div></div>';
+  html += '<div class="stat-card"><div class="value">' + (p.response_time ? p.response_time.toFixed(2) + 's' : '?') + '</div><div class="label">Response</div></div>';
+  html += '<div class="stat-card"><div class="value">' + (p.word_count || 0) + '</div><div class="label">Words</div></div>';
+  html += '<div class="stat-card"><div class="value">' + (p.code_to_text_ratio != null ? p.code_to_text_ratio + '%' : '?') + '</div><div class="label">Text/HTML</div></div>';
+  html += '</div>';
+
+  // Issues
+  html += '<div class="card"><h3>Issues (' + (p.issues || []).length + ')</h3>';
+  if ((p.issues || []).length) {
+    html += '<table><thead><tr><th>Severity</th><th>Type</th><th>Message</th></tr></thead><tbody>';
+    (p.issues || []).forEach(function(i) { html += '<tr><td><span class="badge badge-' + i.severity + '">' + i.severity + '</span></td><td style="font-size:12px;">' + fmtType(i.type) + '</td><td style="font-size:12px;">' + esc(i.message) + '</td></tr>'; });
+    html += '</tbody></table>';
+  } else { html += '<div style="color:var(--green);padding:12px;">No issues found!</div>'; }
+  html += '</div>';
+
+  // SEO Details
+  html += '<div class="card"><h3>On-Page SEO</h3><table><tbody>';
+  html += dRow('Title', p.title, p.title_length ? '(' + p.title_length + ' chars)' : '');
+  html += dRow('Meta Description', p.meta_description ? p.meta_description.substring(0, 120) + '...' : null, p.meta_description_length ? '(' + p.meta_description_length + ' chars)' : '');
+  html += dRow('Canonical URL', p.canonical_url);
+  if (p.canonical_issues && p.canonical_issues.length) html += dRow('Canonical Issues', p.canonical_issues.join(', '));
+  html += dRow('Robots Meta', p.robots_meta);
+  html += dRow('Noindex', p.is_noindex ? 'Yes' : 'No');
+  html += dRow('Nofollow Meta', p.is_nofollow_meta ? 'Yes' : 'No');
+  html += dRow('H1', p.h1_texts ? p.h1_texts.join(', ') : 'None', '(' + p.h1_count + ' found)');
+  html += dRow('H2-H6', 'H2:' + p.h2_count + ' H3:' + p.h3_count + ' H4:' + (p.h4_count || 0) + ' H5:' + (p.h5_count || 0) + ' H6:' + (p.h6_count || 0));
+  html += dRow('Viewport', p.has_viewport_meta ? 'Present' : 'Missing');
+  html += '</tbody></table></div>';
+
+  // Links & Images
+  html += '<div class="card"><h3>Links & Images</h3><table><tbody>';
+  html += dRow('Internal Links', p.internal_links);
+  html += dRow('External Links', p.external_links);
+  html += dRow('Nofollow Links', p.nofollow_links || 0);
+  html += dRow('Total Images', p.total_images);
+  html += dRow('Images Without Alt', p.images_without_alt);
+  html += dRow('Images Empty Alt', p.images_with_empty_alt || 0);
+  html += '</tbody></table></div>';
+
+  // Structured Data & Social
+  html += '<div class="card"><h3>Structured Data & Social</h3><table><tbody>';
+  html += dRow('Schema Markup', p.has_schema_markup ? 'Yes' : 'No');
+  html += dRow('Schema Types', p.schema_types ? p.schema_types.join(', ') : 'None');
+  html += dRow('OG Title', p.og_title);
+  html += dRow('OG Description', p.og_description ? p.og_description.substring(0, 100) + '...' : null);
+  html += dRow('OG Image', p.og_image);
+  html += dRow('Hreflang', p.has_hreflang ? 'Yes (' + (p.hreflang_entries || []).length + ' entries)' : 'No');
+  html += dRow('Placeholders', p.has_placeholders ? 'Yes (' + (p.placeholder_content || []).length + ')' : 'No');
+  html += dRow('Lazy Loading', p.has_lazy_loading ? 'Yes' : 'No');
+  html += '</tbody></table></div>';
+
+  el.innerHTML = html;
+}
+
+function dRow(label, value, extra) {
+  var display = value || '<span style="color:var(--text2)">—</span>';
+  return '<tr><td style="color:var(--text2);width:200px;font-size:13px;">' + label + '</td><td style="font-size:13px;">' + esc(String(display)) + ' <span style="color:var(--text2);font-size:11px;">' + (extra || '') + '</span></td></tr>';
+}
+
+function esc(str) {
+  if (!str) return '';
+  var div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+render();
+</script>
+</body>
+</html>
