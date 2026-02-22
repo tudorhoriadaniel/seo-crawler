@@ -424,6 +424,39 @@ function renderDashboard(el) {
   html += '<div class="stat-card"><div class="value">' + s.avg_response_time + 's</div><div class="label">Avg Response</div></div>';
   html += '</div>';
 
+  // ── Status Code Pie Chart ──
+  var scb = s.status_code_breakdown || [];
+  if (scb.length) {
+    var groups = {'2xx':0,'3xx':0,'4xx':0,'5xx':0};
+    scb.forEach(function(c){
+      var code = c.status_code;
+      if (code>=200 && code<300) groups['2xx'] += c.count;
+      else if (code>=300 && code<400) groups['3xx'] += c.count;
+      else if (code>=400 && code<500) groups['4xx'] += c.count;
+      else if (code>=500) groups['5xx'] += c.count;
+    });
+    var totalSC = groups['2xx']+groups['3xx']+groups['4xx']+groups['5xx'];
+    var pieColors = {'2xx':'#00cec9','3xx':'#a29bfe','4xx':'#fdcb6e','5xx':'#ff6b6b'};
+    var pieData = [];
+    ['2xx','3xx','4xx','5xx'].forEach(function(k){if(groups[k]>0) pieData.push({label:k,value:groups[k],color:pieColors[k]});});
+    // Build SVG pie
+    var svgPie = '<svg viewBox="0 0 36 36" style="width:140px;height:140px;transform:rotate(-90deg);">';
+    var cumulative = 0;
+    pieData.forEach(function(d){
+      var pct = (d.value / totalSC) * 100;
+      var dashArray = pct + ' ' + (100 - pct);
+      svgPie += '<circle cx="18" cy="18" r="15.915" fill="none" stroke="'+d.color+'" stroke-width="3.5" stroke-dasharray="'+dashArray+'" stroke-dashoffset="-'+cumulative+'" />';
+      cumulative += pct;
+    });
+    svgPie += '</svg>';
+    var legend = '';
+    pieData.forEach(function(d){
+      var pct = ((d.value/totalSC)*100).toFixed(1);
+      legend += '<div style="display:flex;align-items:center;gap:6px;font-size:13px;"><span style="width:12px;height:12px;border-radius:3px;background:'+d.color+';display:inline-block;"></span><span style="color:var(--text);">'+d.label+': <strong>'+d.value+'</strong> ('+pct+'%)</span></div>';
+    });
+    html += '<div class="card"><h3>Status Codes Overview</h3><div style="display:flex;align-items:center;gap:32px;flex-wrap:wrap;"><div style="flex-shrink:0;">'+svgPie+'</div><div style="display:flex;flex-direction:column;gap:6px;">'+legend+'</div></div></div>';
+  }
+
   // ── All URLs Table (paginated 50/page) ──
   html += '<div class="card" id="sec-all-urls"><h3>All URLs <span class="badge badge-info">' + allTP.length + ' pages</span></h3>';
   // Pagination controls top
@@ -569,7 +602,15 @@ function renderDashboard(el) {
     issueAcc('sec-dup-metas','warning','Duplicate Meta Descriptions',s.duplicate_meta_descriptions.length+' groups',b);
   }
 
-  // Canonical Issues
+  // Missing Canonical Tag
+  if (s.pages_missing_canonical) {
+    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
+    (s.issue_groups || []).filter(function(g){return g.category==='missing_canonical'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
+    b += '</tbody></table>';
+    issueAcc('sec-miss-canonical','warning','Missing Canonical Tag',s.pages_missing_canonical,b);
+  }
+
+  // Canonical Issues (external, relative, not self-referencing)
   if (s.canonical_issues.length) {
     var b = '<table><thead><tr><th>Page URL</th><th>Canonical URL</th><th>Issues</th></tr></thead><tbody>';
     s.canonical_issues.forEach(function(c) {

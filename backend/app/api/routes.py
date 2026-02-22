@@ -383,6 +383,7 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
 
     # --- Schema (exclude redirects) ---
     no_schema = sum(1 for p in content_pages if not p.has_schema_markup)
+    missing_canonical = sum(1 for p in content_pages if p.canonical_issues and "missing" in p.canonical_issues)
 
     # --- Issue groups for the grouped issues table ---
     issue_groups = []
@@ -439,6 +440,7 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
         "robots_txt_status": crawl.robots_txt_status,
         "sitemaps_found": crawl.sitemaps_found,
         "pages_without_schema": no_schema,
+        "pages_missing_canonical": missing_canonical,
         "issue_groups": issue_groups,
     }
 

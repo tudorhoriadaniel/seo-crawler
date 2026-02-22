@@ -28,8 +28,8 @@ active_crawls: dict[int, "CrawlEngine"] = {}
 class CrawlEngine:
     """Async crawler that discovers pages and runs SEO analysis."""
 
-    MAX_PAGES = 100
-    CONCURRENCY = 3
+    MAX_PAGES = 10000
+    CONCURRENCY = 10
     TIMEOUT = 15
 
     def __init__(self, crawl_id: int, base_url: str):
@@ -221,9 +221,9 @@ class CrawlEngine:
 
             # Wait until queue is empty with a timeout
             try:
-                await asyncio.wait_for(self.queue.join(), timeout=300)
+                await asyncio.wait_for(self.queue.join(), timeout=7200)
             except asyncio.TimeoutError:
-                logger.warning("Crawl timed out after 5 minutes")
+                logger.warning("Crawl timed out after 2 hours")
 
             # Cancel workers
             for w in self._workers:
@@ -301,9 +301,9 @@ class CrawlEngine:
     async def _crawl_page(self, client: httpx.AsyncClient, url: str):
         """Fetch and analyze a single page.
 
-        Uses follow_redirects=True so if a URL 301s we transparently
-        land on the final 200 page and analyze that.  The redirect is
-        noted as an issue on the page but does NOT consume an extra slot.
+        Uses follow_redirects=True so 301s resolve transparently.
+        Checks resp.history to detect redirects and records the original
+        status code.  4xx/5xx pages are saved as lightweight records.
         """
         start = time.monotonic()
 
@@ -318,11 +318,12 @@ class CrawlEngine:
         final_domain = urlparse(final_url).netloc
         final_status = resp.status_code
 
-        # If we were redirected, figure out where we ended up
-        was_redirected = final_url != url.rstrip("/")
+        # Detect redirects from the response history
+        was_redirected = len(resp.history) > 0
+        original_status = resp.history[0].status_code if was_redirected else final_status
 
         if was_redirected:
-            logger.info(f"URL {url} redirected to {final_url} (status {final_status})")
+            logger.info(f"URL {url} redirected ({original_status}) to {final_url} (status {final_status})")
 
             # If the final destination is off our domain, skip it entirely
             if final_domain != self.domain:
@@ -335,6 +336,48 @@ class CrawlEngine:
 
         content_type = resp.headers.get("content-type", "")
 
+        # For 4xx/5xx errors, save a minimal record even if non-HTML
+        if final_status >= 400:
+            logger.info(f"Error status {final_status} for {url}")
+            error_result = {
+                "url": url,
+                "status_code": final_status,
+                "response_time": response_time,
+                "content_length": len(resp.content),
+                "title": None, "title_length": 0,
+                "meta_description": None, "meta_description_length": 0,
+                "canonical_url": None, "canonical_issues": None,
+                "robots_meta": None,
+                "is_noindex": False, "is_nofollow_meta": False,
+                "h1_count": 0, "h1_texts": None,
+                "h2_count": 0, "h3_count": 0, "h4_count": 0, "h5_count": 0, "h6_count": 0,
+                "total_images": 0, "images_without_alt": 0, "images_without_alt_urls": None,
+                "images_with_empty_alt": 0, "images_with_empty_alt_urls": None,
+                "internal_links": 0, "external_links": 0,
+                "nofollow_links": 0, "nofollow_internal_links": None,
+                "broken_links": 0,
+                "has_schema_markup": False, "schema_types": None,
+                "has_viewport_meta": False,
+                "word_count": 0, "has_lazy_loading": False,
+                "code_to_text_ratio": None, "html_size": None, "text_size": None,
+                "og_title": None, "og_description": None, "og_image": None,
+                "has_hreflang": False, "hreflang_entries": None, "hreflang_issues": None,
+                "has_placeholders": False, "placeholder_content": None,
+                "redirect_target": None,
+                "issues": [{"severity": "critical", "type": "http_error",
+                            "message": f"HTTP {final_status} error"}],
+                "score": 0,
+            }
+            try:
+                await self._save_page(error_result, content_type or "error")
+            except Exception as e:
+                logger.error(f"DB save failed for error page {url}: {e}")
+            try:
+                await self._update_crawl(pages_crawled=len(self.visited))
+            except Exception:
+                pass
+            return
+
         if "text/html" not in content_type:
             logger.info(f"Skipping non-HTML: {final_url} ({content_type})")
             return
@@ -346,15 +389,14 @@ class CrawlEngine:
         analyzer = SEOAnalyzer(final_url, html, final_status, response_time)
         result = analyzer.analyze()
 
-        # If there was a redirect, note it as an issue on this page
+        # If there was a redirect, note it on this page
         if was_redirected:
             result["redirect_target"] = final_url
-            # Override the URL to the final destination (that's what we actually analyzed)
-            result["url"] = final_url
+            result["url"] = final_url  # save under the final URL
             result.setdefault("issues", []).append({
                 "severity": "info",
                 "type": "redirect",
-                "message": f"Reached via redirect from {url}"
+                "message": f"Reached via redirect ({original_status}) from {url}"
             })
 
         # Save to DB
