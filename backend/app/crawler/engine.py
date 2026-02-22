@@ -20,6 +20,10 @@ from app.core.database import async_session
 logger = logging.getLogger("crawler")
 logging.basicConfig(level=logging.INFO)
 
+# ── Global registry of active crawls ──────────────────────
+# Maps crawl_id -> CrawlEngine instance for pause/stop/resume
+active_crawls: dict[int, "CrawlEngine"] = {}
+
 
 class CrawlEngine:
     """Async crawler that discovers pages and runs SEO analysis."""
@@ -36,6 +40,27 @@ class CrawlEngine:
         self.queue: asyncio.Queue = asyncio.Queue()
         self.robots_parser: Optional[RobotsParser] = None
         self._lock = asyncio.Lock()
+        # Pause/stop control
+        self._paused = asyncio.Event()
+        self._paused.set()  # not paused by default (set = running)
+        self._stopped = False
+        self._workers: list[asyncio.Task] = []
+
+    def pause(self):
+        """Pause crawling — workers will wait until resumed."""
+        self._paused.clear()
+        logger.info(f"Crawl {self.crawl_id} paused")
+
+    def resume(self):
+        """Resume a paused crawl."""
+        self._paused.set()
+        logger.info(f"Crawl {self.crawl_id} resumed")
+
+    def stop(self):
+        """Stop crawling — workers will exit cleanly."""
+        self._stopped = True
+        self._paused.set()  # unblock any paused workers so they can exit
+        logger.info(f"Crawl {self.crawl_id} stopped")
 
     async def _update_crawl(self, **kwargs):
         """Update crawl record with a fresh DB session."""
@@ -103,9 +128,12 @@ class CrawlEngine:
             db.add(page)
             await db.commit()
 
-    async def run(self):
+    async def run(self, resume_from_stopped: bool = False):
         """Start the crawl."""
-        logger.info(f"Starting crawl {self.crawl_id} for {self.base_url}")
+        logger.info(f"Starting crawl {self.crawl_id} for {self.base_url} (resume={resume_from_stopped})")
+
+        # Register in global registry
+        active_crawls[self.crawl_id] = self
 
         await self._update_crawl(
             status="running",
@@ -113,6 +141,17 @@ class CrawlEngine:
         )
 
         try:
+            if resume_from_stopped:
+                # Load already-visited URLs from DB so we don't re-crawl
+                async with async_session() as db:
+                    from sqlalchemy import select
+                    result = await db.execute(
+                        select(Page.url).where(Page.crawl_id == self.crawl_id)
+                    )
+                    existing_urls = {row[0] for row in result.fetchall()}
+                    self.visited = existing_urls
+                    logger.info(f"Resumed with {len(existing_urls)} already-crawled URLs")
+
             # Parse robots.txt
             logger.info("Fetching robots.txt...")
             self.robots_parser = RobotsParser(self.base_url)
@@ -136,15 +175,17 @@ class CrawlEngine:
                 sitemaps_found=sitemap_parser.sitemaps_found,
             )
 
-            # Seed the queue
-            self.queue.put_nowait(self.base_url)
+            # Seed the queue (only URLs not yet visited)
+            if self.base_url not in self.visited:
+                self.queue.put_nowait(self.base_url)
             for url in sitemap_urls[:self.MAX_PAGES]:
-                self.queue.put_nowait(url)
+                if url not in self.visited:
+                    self.queue.put_nowait(url)
 
             logger.info(f"Queue seeded with {self.queue.qsize()} URLs. Starting workers...")
 
             # Run workers
-            workers = [asyncio.create_task(self._worker()) for _ in range(self.CONCURRENCY)]
+            self._workers = [asyncio.create_task(self._worker()) for _ in range(self.CONCURRENCY)]
 
             # Wait until queue is empty with a timeout
             try:
@@ -153,18 +194,23 @@ class CrawlEngine:
                 logger.warning("Crawl timed out after 5 minutes")
 
             # Cancel workers
-            for w in workers:
+            for w in self._workers:
                 w.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
+            await asyncio.gather(*self._workers, return_exceptions=True)
 
-            # Update crawl status
+            # Determine final status
+            if self._stopped:
+                final_status = "stopped"
+            else:
+                final_status = "completed"
+
             await self._update_crawl(
-                status="completed",
+                status=final_status,
                 completed_at=datetime.datetime.utcnow(),
                 pages_crawled=len(self.visited),
                 pages_total=len(self.visited),
             )
-            logger.info(f"Crawl completed. {len(self.visited)} pages crawled.")
+            logger.info(f"Crawl {final_status}. {len(self.visited)} pages crawled.")
 
         except Exception as e:
             logger.error(f"Crawl failed: {e}", exc_info=True)
@@ -172,6 +218,8 @@ class CrawlEngine:
                 status="failed",
                 completed_at=datetime.datetime.utcnow(),
             )
+        finally:
+            active_crawls.pop(self.crawl_id, None)
 
     async def _worker(self):
         """Worker that processes URLs from the queue."""
@@ -189,8 +237,22 @@ class CrawlEngine:
             headers={"User-Agent": "Mozilla/5.0 (compatible; SEOCrawlerBot/1.0; +https://ai.tudordaniel.ro)"},
         ) as client_follow:
             while True:
+                # Check if stopped
+                if self._stopped:
+                    return
+
+                # Wait if paused
+                await self._paused.wait()
+
                 url = await self.queue.get()
                 try:
+                    # Check stop again after getting URL
+                    if self._stopped:
+                        continue
+
+                    # Wait if paused
+                    await self._paused.wait()
+
                     # Thread-safe check: skip if already visited or at max
                     async with self._lock:
                         if url in self.visited or len(self.visited) >= self.MAX_PAGES:

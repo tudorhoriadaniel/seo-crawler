@@ -216,9 +216,12 @@ async function viewProject(projectId) {
     if (latest.status === 'completed') {
       var results = await Promise.all([api('/crawls/' + latest.id + '/summary'), api('/crawls/' + latest.id + '/pages'), api('/crawls/' + latest.id + '/pages/table')]);
       navigate('dashboard', { crawl: latest, summary: results[0], pages: results[1], tablePages: results[2] });
-    } else if (latest.status === 'running' || latest.status === 'pending') {
+    } else if (latest.status === 'running' || latest.status === 'pending' || latest.status === 'paused') {
       navigate('crawling', { crawl: latest });
       pollCrawl(latest.id);
+    } else if (latest.status === 'stopped') {
+      // Show stopped state with resume option
+      navigate('crawling', { crawl: latest });
     } else { alert('Last crawl failed. Try re-crawling.'); }
   } catch (e) { alert('Error: ' + e.message); }
 }
@@ -232,16 +235,96 @@ async function deleteProject(id) {
 // ─── Crawling ────────────────────────────────────────
 function renderCrawling(el) {
   var c = state.crawl;
-  el.innerHTML = '<div class="card" style="text-align:center;padding:40px;"><div class="spinner"></div><h2 style="margin-top:20px" class="pulse">Crawling website...</h2><p style="color:var(--text2);margin-top:8px;">Status: <strong>' + c.status + '</strong></p><p style="color:var(--text2);">Pages crawled: <strong id="crawl-count">' + c.pages_crawled + '</strong></p></div>';
+  var isRunning = c.status === 'running' || c.status === 'pending';
+  var isPaused = c.status === 'paused';
+  var isStopped = c.status === 'stopped';
+
+  var html = '<div class="card" style="text-align:center;padding:40px;">';
+
+  if (isRunning) {
+    html += '<div class="spinner"></div>';
+    html += '<h2 style="margin-top:20px" class="pulse">Crawling website...</h2>';
+  } else if (isPaused) {
+    html += '<div style="font-size:48px;margin-bottom:12px;">&#9208;</div>';
+    html += '<h2 style="margin-top:8px;color:var(--orange);">Crawl Paused</h2>';
+  } else if (isStopped) {
+    html += '<div style="font-size:48px;margin-bottom:12px;">&#9209;</div>';
+    html += '<h2 style="margin-top:8px;color:var(--red);">Crawl Stopped</h2>';
+  }
+
+  html += '<p style="color:var(--text2);margin-top:8px;">Status: <strong id="crawl-status">' + c.status + '</strong></p>';
+  html += '<p style="color:var(--text2);">Pages crawled: <strong id="crawl-count">' + c.pages_crawled + '</strong></p>';
+  html += '<div style="margin-top:20px;display:flex;gap:10px;justify-content:center;">';
+
+  if (isRunning) {
+    html += '<button class="btn" onclick="pauseCrawl()" style="background:var(--orange);">&#9208; Pause</button>';
+    html += '<button class="btn btn-danger" onclick="stopCrawl()">&#9209; Stop</button>';
+  } else if (isPaused) {
+    html += '<button class="btn" onclick="resumeCrawl()">&#9654; Resume</button>';
+    html += '<button class="btn btn-danger" onclick="stopCrawl()">&#9209; Stop</button>';
+  } else if (isStopped) {
+    html += '<button class="btn" onclick="resumeCrawl()">&#9654; Resume Crawl</button>';
+    html += '<button class="btn btn-outline" onclick="navigate(\'home\')">Back to Projects</button>';
+    // If pages were crawled, allow viewing partial results
+    if (c.pages_crawled > 0) {
+      html += '<button class="btn btn-sm btn-outline" onclick="viewPartialResults(' + c.id + ')">View Partial Results</button>';
+    }
+  }
+
+  html += '</div></div>';
+  el.innerHTML = html;
+}
+
+async function pauseCrawl() {
+  if (!state.crawl) return;
+  try {
+    await api('/crawls/' + state.crawl.id + '/pause', { method: 'POST' });
+    state.crawl.status = 'paused';
+    render();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function resumeCrawl() {
+  if (!state.crawl) return;
+  try {
+    await api('/crawls/' + state.crawl.id + '/resume', { method: 'POST' });
+    state.crawl.status = 'running';
+    render();
+    pollCrawl(state.crawl.id);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function stopCrawl() {
+  if (!state.crawl) return;
+  if (!confirm('Stop the crawl? You can resume it later.')) return;
+  try {
+    await api('/crawls/' + state.crawl.id + '/stop', { method: 'POST' });
+    state.crawl.status = 'stopped';
+    if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+    render();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function viewPartialResults(crawlId) {
+  try {
+    var results = await Promise.all([api('/crawls/' + crawlId + '/summary'), api('/crawls/' + crawlId + '/pages'), api('/crawls/' + crawlId + '/pages/table')]);
+    navigate('dashboard', { summary: results[0], pages: results[1], tablePages: results[2] });
+  } catch (e) { alert('Error loading results: ' + e.message); }
 }
 
 function pollCrawl(crawlId) {
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
   state.pollTimer = setInterval(async function() {
     try {
       var c = await api('/crawls/' + crawlId);
+      var prevStatus = state.crawl ? state.crawl.status : null;
       state.crawl = c;
+      // Update live counters without full re-render
       var el = document.getElementById('crawl-count');
       if (el) el.textContent = c.pages_crawled;
+      var statusEl = document.getElementById('crawl-status');
+      if (statusEl) statusEl.textContent = c.status;
+
       if (c.status === 'completed') {
         clearInterval(state.pollTimer); state.pollTimer = null;
         var results = await Promise.all([api('/crawls/' + c.id + '/summary'), api('/crawls/' + c.id + '/pages'), api('/crawls/' + c.id + '/pages/table')]);
@@ -249,6 +332,15 @@ function pollCrawl(crawlId) {
       } else if (c.status === 'failed') {
         clearInterval(state.pollTimer); state.pollTimer = null;
         alert('Crawl failed.'); navigate('home');
+      } else if (c.status === 'stopped') {
+        clearInterval(state.pollTimer); state.pollTimer = null;
+        renderCrawling(document.getElementById('app'));
+      } else if (c.status === 'paused' && prevStatus !== 'paused') {
+        // Status just changed to paused — re-render to show pause UI
+        renderCrawling(document.getElementById('app'));
+      } else if (c.status === 'running' && prevStatus === 'paused') {
+        // Resumed — re-render to show running UI
+        renderCrawling(document.getElementById('app'));
       }
     } catch (e) { console.error(e); }
   }, 2000);

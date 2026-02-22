@@ -15,7 +15,7 @@ from app.schemas.schemas import (
     PageSummary, PageDetail, PageTableRow, CrawlSummary,
     DuplicateGroup, StatusCodeGroup, IssueGroup,
 )
-from app.crawler.engine import CrawlEngine
+from app.crawler.engine import CrawlEngine, active_crawls
 
 router = APIRouter()
 
@@ -90,6 +90,79 @@ async def list_crawls(project_id: int, db: AsyncSession = Depends(get_db)):
         select(Crawl).where(Crawl.project_id == project_id).order_by(Crawl.created_at.desc())
     )
     return result.scalars().all()
+
+
+# ─── Crawl Control (Pause / Stop / Resume) ──────────────────
+@router.post("/crawls/{crawl_id}/pause")
+async def pause_crawl(crawl_id: int, db: AsyncSession = Depends(get_db)):
+    crawl = await db.get(Crawl, crawl_id)
+    if not crawl:
+        raise HTTPException(status_code=404, detail="Crawl not found")
+    if crawl.status != "running":
+        raise HTTPException(status_code=400, detail=f"Cannot pause crawl with status '{crawl.status}'")
+
+    engine = active_crawls.get(crawl_id)
+    if not engine:
+        raise HTTPException(status_code=400, detail="Crawl engine not found in memory")
+
+    engine.pause()
+    crawl.status = "paused"
+    await db.commit()
+    return {"message": "Crawl paused", "status": "paused"}
+
+
+@router.post("/crawls/{crawl_id}/resume")
+async def resume_crawl(crawl_id: int, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    crawl = await db.get(Crawl, crawl_id)
+    if not crawl:
+        raise HTTPException(status_code=404, detail="Crawl not found")
+
+    if crawl.status == "paused":
+        # Resume in-memory engine
+        engine = active_crawls.get(crawl_id)
+        if not engine:
+            raise HTTPException(status_code=400, detail="Crawl engine not found in memory")
+        engine.resume()
+        crawl.status = "running"
+        await db.commit()
+        return {"message": "Crawl resumed", "status": "running"}
+
+    elif crawl.status == "stopped":
+        # Re-start engine, loading already-crawled URLs from DB
+        project = await db.get(Project, crawl.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        async def _resume_crawl(cid: int, url: str):
+            engine = CrawlEngine(cid, url)
+            await engine.run(resume_from_stopped=True)
+
+        background_tasks.add_task(_resume_crawl, crawl.id, project.url)
+        return {"message": "Crawl resuming from stopped state", "status": "running"}
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Cannot resume crawl with status '{crawl.status}'")
+
+
+@router.post("/crawls/{crawl_id}/stop")
+async def stop_crawl(crawl_id: int, db: AsyncSession = Depends(get_db)):
+    crawl = await db.get(Crawl, crawl_id)
+    if not crawl:
+        raise HTTPException(status_code=404, detail="Crawl not found")
+    if crawl.status not in ("running", "paused"):
+        raise HTTPException(status_code=400, detail=f"Cannot stop crawl with status '{crawl.status}'")
+
+    engine = active_crawls.get(crawl_id)
+    if engine:
+        engine.stop()
+        # The engine will set status to "stopped" when workers finish
+    else:
+        # Engine not in memory (server restarted?), just update DB
+        crawl.status = "stopped"
+        crawl.completed_at = __import__("datetime").datetime.utcnow()
+        await db.commit()
+
+    return {"message": "Crawl stopping", "status": "stopped"}
 
 
 # ─── Pages ──────────────────────────────────────────────────
