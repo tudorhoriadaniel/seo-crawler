@@ -134,7 +134,7 @@ tr:hover { background: var(--surface2); }
 
 <script>
 const API = '/api';
-let state = { view: 'home', projects: [], crawl: null, summary: null, pages: [], tablePages: [], pageDetail: null, pollTimer: null };
+let state = { view: 'home', projects: [], crawl: null, summary: null, pages: [], tablePages: [], pageDetail: null, pollTimer: null, tablePage: 0 };
 
 async function api(path, opts = {}) {
   const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -258,10 +258,16 @@ function pollCrawl(crawlId) {
 function renderDashboard(el) {
   var s = state.summary;
   var scoreClass = s.avg_score >= 70 ? 'score-good' : s.avg_score >= 40 ? 'score-ok' : 'score-bad';
+  var PER_PAGE = 50;
+  var allTP = state.tablePages || [];
+  var totalTablePages = Math.ceil(allTP.length / PER_PAGE) || 1;
+  if (state.tablePage >= totalTablePages) state.tablePage = totalTablePages - 1;
+  if (state.tablePage < 0) state.tablePage = 0;
+  var pageSlice = allTP.slice(state.tablePage * PER_PAGE, (state.tablePage + 1) * PER_PAGE);
 
   var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><h2>Crawl Dashboard</h2><div style="display:flex;gap:8px;"><button class="btn btn-sm" onclick="exportPDF()">&#128196; Export PDF</button><button class="btn btn-sm btn-outline" onclick="navigate(\'pages\')">All Pages</button><button class="btn btn-sm btn-outline" onclick="navigate(\'home\')">Back</button></div></div>';
 
-  // Stats
+  // ── Scorecards ──
   html += '<div class="stats-grid">';
   html += '<div class="stat-card"><div class="score-ring ' + scoreClass + '">' + s.avg_score + '</div><div class="label">Avg Score</div></div>';
   html += '<div class="stat-card"><div class="value">' + s.total_pages + '</div><div class="label">Pages Crawled</div></div>';
@@ -271,158 +277,17 @@ function renderDashboard(el) {
   html += '<div class="stat-card"><div class="value">' + s.avg_response_time + 's</div><div class="label">Avg Response</div></div>';
   html += '</div>';
 
-  // Issue categories grid
-  html += '<div class="card"><h3>Issue Overview</h3><div class="issue-cat">';
-  var cats = [
-    { icon: '&#128221;', title: 'Missing Titles', count: s.pages_missing_title, sev: 'critical', target: 'sec-all-issues' },
-    { icon: '&#128203;', title: 'Missing Meta Desc', count: s.pages_missing_meta, sev: 'critical', target: 'sec-all-issues' },
-    { icon: '&#128292;', title: 'Missing H1', count: s.pages_missing_h1, sev: 'critical', target: 'sec-all-issues' },
-    { icon: '&#128241;', title: 'Missing Viewport', count: s.pages_missing_viewport, sev: 'critical', target: 'sec-all-issues' },
-    { icon: '&#128279;', title: 'Canonical Issues', count: s.canonical_issues.length, sev: 'warning', target: 'sec-canonical' },
-    { icon: '&#128444;', title: 'Images No Alt', count: s.total_images_missing_alt, sev: 'warning', target: 'sec-images' },
-    { icon: '&#128683;', title: 'Noindex Pages', count: s.noindex_pages.length, sev: 'warning', target: 'sec-indexability' },
-    { icon: '&#128196;', title: 'Thin Content', count: s.thin_content_pages.length, sev: 'warning', target: 'sec-content' },
-    { icon: '&#9889;', title: 'Slow Pages', count: s.slow_pages.length, sev: 'warning', target: 'sec-slow' },
-    { icon: '&#128269;', title: 'No Schema', count: s.pages_without_schema, sev: 'info', target: 'sec-all-issues' },
-    { icon: '&#128209;', title: 'Duplicate Titles', count: s.duplicate_titles.length, sev: 'warning', target: 'sec-dup-titles' },
-    { icon: '&#128260;', title: 'Placeholder Content', count: s.placeholder_pages.length, sev: 'critical', target: 'sec-content' },
-    { icon: '&#128202;', title: 'All URLs Table', count: s.total_pages, sev: 'info', target: 'sec-all-urls' },
-  ];
-  cats.forEach(function(c) {
-    var onclick = c.count > 0 ? ' onclick="scrollToSec(\'' + c.target + '\')" style="cursor:pointer"' : '';
-    html += '<div class="issue-cat-card"' + onclick + '><div class="header"><span class="title">' + c.icon + ' ' + c.title + '</span><span class="badge badge-' + c.sev + '">' + c.count + '</span></div><div class="desc">' + (c.count === 0 ? 'No issues found' : c.count + ' issue' + (c.count > 1 ? 's' : '') + ' detected') + '</div></div>';
-  });
+  // ── All URLs Table (paginated 50/page) ──
+  html += '<div class="card" id="sec-all-urls"><h3>All URLs <span class="badge badge-info">' + allTP.length + ' pages</span></h3>';
+  // Pagination controls top
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+  html += '<span style="font-size:13px;color:var(--text2);">Page ' + (state.tablePage + 1) + ' of ' + totalTablePages + ' (' + allTP.length + ' URLs)</span>';
+  html += '<div style="display:flex;gap:6px;">';
+  html += '<button class="btn btn-sm btn-outline" onclick="goTablePage(0)" ' + (state.tablePage === 0 ? 'disabled' : '') + '>&laquo; First</button>';
+  html += '<button class="btn btn-sm btn-outline" onclick="goTablePage(' + (state.tablePage - 1) + ')" ' + (state.tablePage === 0 ? 'disabled' : '') + '>&lsaquo; Prev</button>';
+  html += '<button class="btn btn-sm btn-outline" onclick="goTablePage(' + (state.tablePage + 1) + ')" ' + (state.tablePage >= totalTablePages - 1 ? 'disabled' : '') + '>Next &rsaquo;</button>';
+  html += '<button class="btn btn-sm btn-outline" onclick="goTablePage(' + (totalTablePages - 1) + ')" ' + (state.tablePage >= totalTablePages - 1 ? 'disabled' : '') + '>Last &raquo;</button>';
   html += '</div></div>';
-
-  // Duplicate Titles
-  if (s.duplicate_titles.length) {
-    html += '<div class="card" id="sec-dup-titles"><h3>Duplicate Titles <span class="badge badge-warning">' + s.duplicate_titles.length + ' groups</span></h3>';
-    html += renderAccordionGroups(s.duplicate_titles);
-    html += '</div>';
-  }
-
-  // Duplicate Meta Descriptions
-  if (s.duplicate_meta_descriptions.length) {
-    html += '<div class="card" id="sec-dup-metas"><h3>Duplicate Meta Descriptions <span class="badge badge-warning">' + s.duplicate_meta_descriptions.length + ' groups</span></h3>';
-    html += renderAccordionGroups(s.duplicate_meta_descriptions);
-    html += '</div>';
-  }
-
-  // Status Codes
-  html += '<div class="card" id="sec-status"><h3>Status Code Breakdown</h3><div style="display:flex;gap:12px;flex-wrap:wrap;">';
-  (s.status_code_breakdown || []).forEach(function(c) {
-    var badge = statusBadge(c.status_code);
-    var color = badge.replace('badge-', '');
-    html += '<div class="stat-card ' + color + '" style="min-width:100px;flex:0;"><div class="value">' + c.count + '</div><div class="label">HTTP ' + c.status_code + '</div></div>';
-  });
-  html += '</div></div>';
-
-  // Canonical Issues
-  if (s.canonical_issues.length) {
-    html += '<div class="card" id="sec-canonical"><h3>Canonical Issues <span class="badge badge-warning">' + s.canonical_issues.length + '</span></h3>';
-    html += '<table><thead><tr><th>Page URL</th><th>Canonical URL</th><th>Issues</th></tr></thead><tbody>';
-    s.canonical_issues.forEach(function(c) {
-      html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + c.page_id + ');return false">' + esc(c.url) + '</a></td><td class="url-cell">' + esc(c.canonical_url || 'none') + '</td><td>' + (c.issues || []).map(function(i) { return '<span class="badge badge-warning">' + i + '</span> '; }).join('') + '</td></tr>';
-    });
-    html += '</tbody></table></div>';
-  }
-
-  // Noindex/Nofollow
-  if (s.noindex_pages.length || s.nofollow_pages.length) {
-    html += '<div class="card" id="sec-indexability"><h3>Indexability Issues</h3>';
-    if (s.noindex_pages.length) {
-      html += '<h4 style="margin:8px 0;color:var(--warning)">Noindex Pages (' + s.noindex_pages.length + ')</h4><table><thead><tr><th>URL</th></tr></thead><tbody>';
-      s.noindex_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td></tr>'; });
-      html += '</tbody></table>';
-    }
-    if (s.nofollow_pages.length) {
-      html += '<h4 style="margin:12px 0 8px;color:var(--warning)">Nofollow Meta Pages (' + s.nofollow_pages.length + ')</h4><table><thead><tr><th>URL</th></tr></thead><tbody>';
-      s.nofollow_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td></tr>'; });
-      html += '</tbody></table>';
-    }
-    html += '</div>';
-  }
-
-  // Images Missing Alt
-  if (s.pages_missing_alt.length || (s.pages_empty_alt && s.pages_empty_alt.length)) {
-    html += '<div class="card" id="sec-images"><h3>Image Alt Text Issues</h3>';
-    if (s.pages_missing_alt.length) {
-      html += '<h4 style="margin:8px 0;color:var(--warning)">Missing Alt Attribute (' + s.total_images_missing_alt + ' images)</h4>';
-      html += '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
-      s.pages_missing_alt.forEach(function(p) {
-        var sampleImg = p.sample_image_url ? '<a href="' + esc(p.sample_image_url) + '" target="_blank" style="font-size:11px;word-break:break-all;">' + esc(p.sample_image_url.split('/').pop().substring(0, 40)) + '</a>' : '—';
-        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.missing_count + '</span></td><td>' + sampleImg + '</td><td>' + p.total_images + '</td></tr>';
-      });
-      html += '</tbody></table>';
-    }
-    if (s.pages_empty_alt && s.pages_empty_alt.length) {
-      html += '<h4 style="margin:12px 0 8px;color:var(--warning)">Empty Alt Text (' + (s.total_images_empty_alt || 0) + ' images)</h4>';
-      html += '<table><thead><tr><th>Page URL</th><th>Empty Alt</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
-      s.pages_empty_alt.forEach(function(p) {
-        var sampleImg = p.sample_image_url ? '<a href="' + esc(p.sample_image_url) + '" target="_blank" style="font-size:11px;word-break:break-all;">' + esc(p.sample_image_url.split('/').pop().substring(0, 40)) + '</a>' : '—';
-        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.empty_count + '</span></td><td>' + sampleImg + '</td><td>' + p.total_images + '</td></tr>';
-      });
-      html += '</tbody></table>';
-    }
-    html += '</div>';
-  }
-
-  // Hreflang Issues
-  if (s.hreflang_issues.length) {
-    html += '<div class="card"><h3>Hreflang Issues <span class="badge badge-warning">' + s.hreflang_issues.length + '</span></h3>';
-    html += '<table><thead><tr><th>Page URL</th><th>Issues</th></tr></thead><tbody>';
-    s.hreflang_issues.forEach(function(h) {
-      html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + h.page_id + ');return false">' + esc(h.url) + '</a></td><td>' + (h.issues || []).map(function(i) { return '<div style="font-size:12px;color:var(--warning)">' + esc(i) + '</div>'; }).join('') + '</td></tr>';
-    });
-    html += '</tbody></table></div>';
-  }
-
-  // Content Issues
-  if (s.thin_content_pages.length || s.low_text_ratio_pages.length || s.placeholder_pages.length) {
-    html += '<div class="card" id="sec-content"><h3>Content Issues</h3>';
-    if (s.thin_content_pages.length) {
-      html += '<h4 style="margin:8px 0;color:var(--warning)">Thin Content (' + s.thin_content_pages.length + ' pages)</h4><table><thead><tr><th>URL</th><th>Word Count</th></tr></thead><tbody>';
-      s.thin_content_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.word_count + ' words</span></td></tr>'; });
-      html += '</tbody></table>';
-    }
-    if (s.low_text_ratio_pages.length) {
-      html += '<h4 style="margin:12px 0 8px;color:var(--warning)">Low Text-to-HTML Ratio (' + s.low_text_ratio_pages.length + ' pages)</h4><table><thead><tr><th>URL</th><th>Ratio</th></tr></thead><tbody>';
-      s.low_text_ratio_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-critical">' + p.ratio + '%</span></td></tr>'; });
-      html += '</tbody></table>';
-    }
-    if (s.placeholder_pages.length) {
-      html += '<h4 style="margin:12px 0 8px;color:var(--critical)">Placeholder / Lorem Ipsum (' + s.placeholder_pages.length + ' pages)</h4><table><thead><tr><th>URL</th><th>Found</th></tr></thead><tbody>';
-      s.placeholder_pages.forEach(function(p) {
-        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td>' + (p.content || []).slice(0, 3).map(function(c) { return '<code style="font-size:11px;background:var(--surface);padding:2px 6px;border-radius:4px;margin-right:4px">' + esc(c.match) + '</code>'; }).join('') + '</td></tr>';
-      });
-      html += '</tbody></table>';
-    }
-    html += '</div>';
-  }
-
-  // Robots & Sitemaps
-  html += '<div class="card"><h3>Robots.txt & Sitemaps</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
-  html += '<div><h4 style="margin-bottom:8px;">robots.txt</h4><div class="sitemap-item"><span>Status</span><span class="badge ' + (s.robots_txt_status === 'found' ? 'badge-good' : 'badge-critical') + '">' + (s.robots_txt_status || 'unknown') + '</span></div></div>';
-  html += '<div><h4 style="margin-bottom:8px;">Sitemaps Found</h4><div class="sitemap-list">';
-  if (s.sitemaps_found && s.sitemaps_found.length) {
-    s.sitemaps_found.forEach(function(sm) {
-      html += '<div class="sitemap-item"><span class="url">' + esc(sm.url) + '</span><span class="meta"><span class="badge badge-info">' + sm.type + '</span><span>' + (sm.urls_count || 0) + ' URLs</span></span></div>';
-    });
-  } else {
-    html += '<div style="color:var(--text2);font-size:13px;">No sitemaps detected</div>';
-  }
-  html += '</div></div></div></div>';
-
-  // Slow Pages
-  if (s.slow_pages.length) {
-    html += '<div class="card" id="sec-slow"><h3>Slow Pages (&gt;3s) <span class="badge badge-warning">' + s.slow_pages.length + '</span></h3>';
-    html += '<table><thead><tr><th>URL</th><th>Response Time</th></tr></thead><tbody>';
-    s.slow_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.response_time.toFixed(2) + 's</span></td></tr>'; });
-    html += '</tbody></table></div>';
-  }
-
-  // ─── All URLs Table ─────────────────────────────────
-  html += '<div class="card" id="sec-all-urls"><h3>All URLs Overview <span class="badge badge-info">' + (state.tablePages || []).length + ' pages</span></h3>';
   html += '<div class="table-scroll"><table><thead><tr>';
   html += '<th class="url-col">URL</th><th class="num-col">Status</th><th class="num-col">Score</th><th class="num-col">Title Len</th><th class="num-col">Meta Len</th>';
   html += '<th class="num-col">H1s</th><th class="num-col">H2s</th><th class="bool-col">Noindex</th><th class="bool-col">Nofollow</th>';
@@ -432,7 +297,7 @@ function renderDashboard(el) {
   html += '<th class="bool-col">Schema</th><th class="bool-col">Hreflang</th><th class="bool-col">Viewport</th><th class="bool-col">Lazy</th><th class="bool-col">Placeh.</th>';
   html += '<th class="num-col">Time</th><th class="num-col">Issues</th>';
   html += '</tr></thead><tbody>';
-  (state.tablePages || []).forEach(function(p) {
+  pageSlice.forEach(function(p) {
     var stc = statusBadge(p.status_code);
     var sc = (p.score || 0) >= 70 ? 'badge-good' : (p.score || 0) >= 40 ? 'badge-warning' : 'badge-critical';
     var tl = p.title_length || 0;
@@ -470,22 +335,234 @@ function renderDashboard(el) {
     html += '<td class="num-col">' + (p.issues_count || 0) + '</td>';
     html += '</tr>';
   });
-  html += '</tbody></table></div></div>';
+  html += '</tbody></table></div>';
+  // Pagination controls bottom
+  html += '<div style="display:flex;align-items:center;justify-content:center;margin-top:10px;gap:6px;">';
+  html += '<button class="btn btn-sm btn-outline" onclick="goTablePage(' + (state.tablePage - 1) + ')" ' + (state.tablePage === 0 ? 'disabled' : '') + '>&lsaquo; Prev</button>';
+  for (var pi = 0; pi < totalTablePages; pi++) {
+    if (totalTablePages <= 10 || pi === 0 || pi === totalTablePages - 1 || Math.abs(pi - state.tablePage) <= 2) {
+      html += '<button class="btn btn-sm ' + (pi === state.tablePage ? '' : 'btn-outline') + '" onclick="goTablePage(' + pi + ')" style="min-width:32px;">' + (pi + 1) + '</button>';
+    } else if (pi === 1 || pi === totalTablePages - 2) {
+      html += '<span style="color:var(--text2);padding:0 4px;">...</span>';
+    }
+  }
+  html += '<button class="btn btn-sm btn-outline" onclick="goTablePage(' + (state.tablePage + 1) + ')" ' + (state.tablePage >= totalTablePages - 1 ? 'disabled' : '') + '>Next &rsaquo;</button>';
+  html += '</div></div>';
 
-  // All Issues Grouped
-  html += '<div class="card" id="sec-all-issues"><h3>All Issues by Type</h3>';
-  (s.issue_groups || []).forEach(function(g) {
-    html += '<div class="accordion"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-' + g.severity + '">' + g.severity + '</span><span style="font-size:13px;font-weight:600;">' + fmtType(g.category) + '</span><span style="font-size:12px;color:var(--text2)">' + g.count + ' page' + (g.count > 1 ? 's' : '') + '</span></div><span class="chevron">&#9654;</span></div>';
-    html += '<div class="accordion-body"><table><thead><tr><th>URL</th><th>Detail</th></tr></thead><tbody>';
-    g.pages.slice(0, 20).forEach(function(p) {
-      html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td style="font-size:12px;color:var(--text2)">' + esc(p.detail) + '</td></tr>';
+  // ── Issue Sections (collapsed accordions with sentence summaries) ──
+  html += '<div class="card"><h3>Issue Details</h3>';
+
+  // Helper: build each issue section as a collapsed accordion
+  function issueAccordion(id, sev, sentence, bodyFn) {
+    html += '<div class="accordion" id="' + id + '"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-' + sev + '">' + sev + '</span><span style="font-size:13px;">' + sentence + '</span></div><span class="chevron">&#9654;</span></div>';
+    html += '<div class="accordion-body">';
+    bodyFn();
+    html += '</div></div>';
+  }
+
+  // Duplicate Titles
+  if (s.duplicate_titles.length) {
+    issueAccordion('sec-dup-titles', 'warning', s.duplicate_titles.length + ' groups of pages share the same title tag', function() {
+      s.duplicate_titles.forEach(function(g) {
+        html += '<div style="margin-bottom:8px;"><strong style="font-size:12px;color:var(--text);">"' + esc(g.value.substring(0, 80)) + (g.value.length > 80 ? '...' : '') + '" (' + g.count + 'x)</strong><div style="margin-left:12px;">';
+        g.pages.forEach(function(p) { html += '<div style="font-size:12px;"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></div>'; });
+        html += '</div></div>';
+      });
     });
-    if (g.count > 20) html += '<tr><td colspan="2" style="color:var(--text2);font-size:12px;">...and ' + (g.count - 20) + ' more</td></tr>';
-    html += '</tbody></table></div></div>';
+  }
+
+  // Duplicate Meta Descriptions
+  if (s.duplicate_meta_descriptions.length) {
+    issueAccordion('sec-dup-metas', 'warning', s.duplicate_meta_descriptions.length + ' groups of pages share the same meta description', function() {
+      s.duplicate_meta_descriptions.forEach(function(g) {
+        html += '<div style="margin-bottom:8px;"><strong style="font-size:12px;color:var(--text);">"' + esc(g.value.substring(0, 80)) + (g.value.length > 80 ? '...' : '') + '" (' + g.count + 'x)</strong><div style="margin-left:12px;">';
+        g.pages.forEach(function(p) { html += '<div style="font-size:12px;"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></div>'; });
+        html += '</div></div>';
+      });
+    });
+  }
+
+  // Status Code Breakdown
+  var statusSentence = (s.status_code_breakdown || []).map(function(c) { return c.count + ' pages returned HTTP ' + c.status_code; }).join(', ');
+  if (statusSentence) {
+    issueAccordion('sec-status', 'info', statusSentence, function() {
+      html += '<div style="display:flex;gap:12px;flex-wrap:wrap;">';
+      (s.status_code_breakdown || []).forEach(function(c) {
+        var badge = statusBadge(c.status_code);
+        var color = badge.replace('badge-', '');
+        html += '<div class="stat-card ' + color + '" style="min-width:100px;flex:0;"><div class="value">' + c.count + '</div><div class="label">HTTP ' + c.status_code + '</div></div>';
+      });
+      html += '</div>';
+    });
+  }
+
+  // Canonical Issues
+  if (s.canonical_issues.length) {
+    issueAccordion('sec-canonical', 'warning', s.canonical_issues.length + ' pages have canonical tag issues', function() {
+      html += '<table><thead><tr><th>Page URL</th><th>Canonical URL</th><th>Issues</th></tr></thead><tbody>';
+      s.canonical_issues.forEach(function(c) {
+        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + c.page_id + ');return false">' + esc(c.url) + '</a></td><td class="url-cell">' + esc(c.canonical_url || 'none') + '</td><td>' + (c.issues || []).map(function(i) { return '<span class="badge badge-warning">' + i + '</span> '; }).join('') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    });
+  }
+
+  // Indexability
+  if (s.noindex_pages.length || s.nofollow_pages.length) {
+    var idxSentence = [];
+    if (s.noindex_pages.length) idxSentence.push(s.noindex_pages.length + ' pages are set to noindex');
+    if (s.nofollow_pages.length) idxSentence.push(s.nofollow_pages.length + ' pages have nofollow meta');
+    issueAccordion('sec-indexability', 'warning', idxSentence.join('; '), function() {
+      if (s.noindex_pages.length) {
+        html += '<h4 style="margin:4px 0 6px;font-size:12px;color:var(--warning)">Noindex Pages</h4>';
+        s.noindex_pages.forEach(function(p) { html += '<div style="font-size:12px;margin-bottom:2px;"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></div>'; });
+      }
+      if (s.nofollow_pages.length) {
+        html += '<h4 style="margin:8px 0 6px;font-size:12px;color:var(--warning)">Nofollow Meta Pages</h4>';
+        s.nofollow_pages.forEach(function(p) { html += '<div style="font-size:12px;margin-bottom:2px;"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></div>'; });
+      }
+    });
+  }
+
+  // Image Alt Text Issues
+  if (s.pages_missing_alt.length || (s.pages_empty_alt && s.pages_empty_alt.length)) {
+    var imgParts = [];
+    if (s.pages_missing_alt.length) imgParts.push(s.total_images_missing_alt + ' images across ' + s.pages_missing_alt.length + ' pages are missing alt attributes');
+    if (s.pages_empty_alt && s.pages_empty_alt.length) imgParts.push((s.total_images_empty_alt || 0) + ' images have empty alt text');
+    issueAccordion('sec-images', 'warning', imgParts.join('; '), function() {
+      if (s.pages_missing_alt.length) {
+        html += '<h4 style="margin:4px 0 6px;font-size:12px;color:var(--warning)">Missing Alt Attribute</h4>';
+        html += '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
+        s.pages_missing_alt.forEach(function(p) {
+          var sampleImg = p.sample_image_url ? '<a href="' + esc(p.sample_image_url) + '" target="_blank" style="font-size:11px;word-break:break-all;">' + esc(p.sample_image_url.split('/').pop().substring(0, 40)) + '</a>' : '—';
+          html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.missing_count + '</span></td><td>' + sampleImg + '</td><td>' + p.total_images + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      }
+      if (s.pages_empty_alt && s.pages_empty_alt.length) {
+        html += '<h4 style="margin:8px 0 6px;font-size:12px;color:var(--warning)">Empty Alt Text</h4>';
+        html += '<table><thead><tr><th>Page URL</th><th>Empty Alt</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
+        s.pages_empty_alt.forEach(function(p) {
+          var sampleImg = p.sample_image_url ? '<a href="' + esc(p.sample_image_url) + '" target="_blank" style="font-size:11px;word-break:break-all;">' + esc(p.sample_image_url.split('/').pop().substring(0, 40)) + '</a>' : '—';
+          html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.empty_count + '</span></td><td>' + sampleImg + '</td><td>' + p.total_images + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      }
+    });
+  }
+
+  // Hreflang Issues
+  if (s.hreflang_issues.length) {
+    issueAccordion('sec-hreflang', 'warning', s.hreflang_issues.length + ' pages have hreflang implementation issues', function() {
+      html += '<table><thead><tr><th>Page URL</th><th>Issues</th></tr></thead><tbody>';
+      s.hreflang_issues.forEach(function(h) {
+        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + h.page_id + ');return false">' + esc(h.url) + '</a></td><td>' + (h.issues || []).map(function(i) { return '<div style="font-size:12px;color:var(--warning)">' + esc(i) + '</div>'; }).join('') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    });
+  }
+
+  // Content Issues
+  if (s.thin_content_pages.length || s.low_text_ratio_pages.length || s.placeholder_pages.length) {
+    var contentParts = [];
+    if (s.thin_content_pages.length) contentParts.push(s.thin_content_pages.length + ' pages have thin content (<300 words)');
+    if (s.low_text_ratio_pages.length) contentParts.push(s.low_text_ratio_pages.length + ' pages have low text-to-HTML ratio');
+    if (s.placeholder_pages.length) contentParts.push(s.placeholder_pages.length + ' pages contain placeholder/lorem ipsum text');
+    issueAccordion('sec-content', 'warning', contentParts.join('; '), function() {
+      if (s.thin_content_pages.length) {
+        html += '<h4 style="margin:4px 0 6px;font-size:12px;color:var(--warning)">Thin Content</h4>';
+        html += '<table><thead><tr><th>URL</th><th>Word Count</th></tr></thead><tbody>';
+        s.thin_content_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.word_count + ' words</span></td></tr>'; });
+        html += '</tbody></table>';
+      }
+      if (s.low_text_ratio_pages.length) {
+        html += '<h4 style="margin:8px 0 6px;font-size:12px;color:var(--warning)">Low Text-to-HTML Ratio</h4>';
+        html += '<table><thead><tr><th>URL</th><th>Ratio</th></tr></thead><tbody>';
+        s.low_text_ratio_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-critical">' + p.ratio + '%</span></td></tr>'; });
+        html += '</tbody></table>';
+      }
+      if (s.placeholder_pages.length) {
+        html += '<h4 style="margin:8px 0 6px;font-size:12px;color:var(--critical)">Placeholder / Lorem Ipsum</h4>';
+        html += '<table><thead><tr><th>URL</th><th>Found</th></tr></thead><tbody>';
+        s.placeholder_pages.forEach(function(p) {
+          html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td>' + (p.content || []).slice(0, 3).map(function(c) { return '<code style="font-size:11px;background:var(--surface);padding:2px 6px;border-radius:4px;margin-right:4px">' + esc(c.match) + '</code>'; }).join('') + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      }
+    });
+  }
+
+  // Missing Structure (title, meta, h1, viewport)
+  var structParts = [];
+  if (s.pages_missing_title) structParts.push(s.pages_missing_title + ' pages missing title');
+  if (s.pages_missing_meta) structParts.push(s.pages_missing_meta + ' pages missing meta description');
+  if (s.pages_missing_h1) structParts.push(s.pages_missing_h1 + ' pages missing H1');
+  if (s.pages_missing_viewport) structParts.push(s.pages_missing_viewport + ' pages missing viewport');
+  if (s.pages_without_schema) structParts.push(s.pages_without_schema + ' pages without schema markup');
+  if (structParts.length) {
+    issueAccordion('sec-structure', 'critical', structParts.join('; '), function() {
+      html += '<table><thead><tr><th>Issue</th><th>Count</th></tr></thead><tbody>';
+      if (s.pages_missing_title) html += '<tr><td>Missing Title</td><td><span class="badge badge-critical">' + s.pages_missing_title + '</span></td></tr>';
+      if (s.pages_missing_meta) html += '<tr><td>Missing Meta Description</td><td><span class="badge badge-critical">' + s.pages_missing_meta + '</span></td></tr>';
+      if (s.pages_missing_h1) html += '<tr><td>Missing H1</td><td><span class="badge badge-critical">' + s.pages_missing_h1 + '</span></td></tr>';
+      if (s.pages_missing_viewport) html += '<tr><td>Missing Viewport</td><td><span class="badge badge-critical">' + s.pages_missing_viewport + '</span></td></tr>';
+      if (s.pages_without_schema) html += '<tr><td>No Schema Markup</td><td><span class="badge badge-info">' + s.pages_without_schema + '</span></td></tr>';
+      html += '</tbody></table>';
+    });
+  }
+
+  // Slow Pages
+  if (s.slow_pages.length) {
+    issueAccordion('sec-slow', 'warning', s.slow_pages.length + ' pages take more than 3 seconds to respond', function() {
+      html += '<table><thead><tr><th>URL</th><th>Response Time</th></tr></thead><tbody>';
+      s.slow_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.response_time.toFixed(2) + 's</span></td></tr>'; });
+      html += '</tbody></table>';
+    });
+  }
+
+  // Robots & Sitemaps
+  var robotsSentence = 'robots.txt ' + (s.robots_txt_status === 'found' ? 'found' : 'not found') + '; ' + ((s.sitemaps_found && s.sitemaps_found.length) ? s.sitemaps_found.length + ' sitemaps detected' : 'no sitemaps detected');
+  issueAccordion('sec-robots', 'info', robotsSentence, function() {
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
+    html += '<div><h4 style="margin-bottom:8px;font-size:12px;">robots.txt</h4><div class="sitemap-item"><span>Status</span><span class="badge ' + (s.robots_txt_status === 'found' ? 'badge-good' : 'badge-critical') + '">' + (s.robots_txt_status || 'unknown') + '</span></div></div>';
+    html += '<div><h4 style="margin-bottom:8px;font-size:12px;">Sitemaps</h4><div class="sitemap-list">';
+    if (s.sitemaps_found && s.sitemaps_found.length) {
+      s.sitemaps_found.forEach(function(sm) {
+        html += '<div class="sitemap-item"><span class="url">' + esc(sm.url) + '</span><span class="meta"><span class="badge badge-info">' + sm.type + '</span><span>' + (sm.urls_count || 0) + ' URLs</span></span></div>';
+      });
+    } else {
+      html += '<div style="color:var(--text2);font-size:12px;">No sitemaps detected</div>';
+    }
+    html += '</div></div></div>';
   });
-  html += '</div>';
+
+  // All Issues by Type
+  if ((s.issue_groups || []).length) {
+    (s.issue_groups || []).forEach(function(g) {
+      html += '<div class="accordion"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-' + g.severity + '">' + g.severity + '</span><span style="font-size:13px;">' + fmtType(g.category) + ' — ' + g.count + ' page' + (g.count > 1 ? 's' : '') + ' affected</span></div><span class="chevron">&#9654;</span></div>';
+      html += '<div class="accordion-body"><table><thead><tr><th>URL</th><th>Detail</th></tr></thead><tbody>';
+      g.pages.slice(0, 30).forEach(function(p) {
+        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td style="font-size:12px;color:var(--text2)">' + esc(p.detail) + '</td></tr>';
+      });
+      if (g.count > 30) html += '<tr><td colspan="2" style="color:var(--text2);font-size:12px;">...and ' + (g.count - 30) + ' more</td></tr>';
+      html += '</tbody></table></div></div>';
+    });
+  }
+
+  html += '</div>'; // close Issue Details card
 
   el.innerHTML = html;
+}
+
+function goTablePage(pg) {
+  var allTP = state.tablePages || [];
+  var totalTablePages = Math.ceil(allTP.length / 50) || 1;
+  if (pg < 0) pg = 0;
+  if (pg >= totalTablePages) pg = totalTablePages - 1;
+  state.tablePage = pg;
+  render();
+  var el = document.getElementById('sec-all-urls');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderAccordionGroups(groups) {
