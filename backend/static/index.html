@@ -60,6 +60,14 @@ nav button:hover, nav button.active { background: var(--accent); color: #fff; bo
 .badge-warning { background: rgba(253,203,110,.15); color: var(--warning); }
 .badge-info { background: rgba(116,185,255,.15); color: var(--info); }
 .badge-good { background: rgba(0,206,201,.15); color: var(--green); }
+.badge-2xx { background: rgba(0,206,201,.15); color: #00cec9; }
+.badge-3xx { background: rgba(162,155,254,.18); color: #a29bfe; }
+.badge-4xx { background: rgba(253,203,110,.18); color: #fdcb6e; }
+.badge-5xx { background: rgba(255,107,107,.15); color: #ff6b6b; }
+[data-theme="light"] .badge-2xx { background: rgba(0,168,157,.1); color: #00856e; }
+[data-theme="light"] .badge-3xx { background: rgba(108,92,231,.12); color: #6c5ce7; }
+[data-theme="light"] .badge-4xx { background: rgba(230,126,34,.12); color: #d35400; }
+[data-theme="light"] .badge-5xx { background: rgba(231,76,60,.12); color: #c0392b; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; padding: 8px 12px; color: var(--text2); border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
@@ -404,7 +412,7 @@ function renderDashboard(el) {
   if (state.tablePage < 0) state.tablePage = 0;
   var pageSlice = allTP.slice(state.tablePage * PER_PAGE, (state.tablePage + 1) * PER_PAGE);
 
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><h2>Crawl Dashboard</h2><div style="display:flex;gap:8px;"><button class="btn btn-sm" onclick="exportPDF()">&#128196; Export PDF</button><button class="btn btn-sm btn-outline" onclick="navigate(\'pages\')">All Pages</button><button class="btn btn-sm btn-outline" onclick="navigate(\'home\')">Back</button></div></div>';
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><h2>Crawl Dashboard</h2><div style="display:flex;gap:8px;"><button class="btn btn-sm" onclick="exportPDF()">&#128196; PDF</button><button class="btn btn-sm" onclick="exportExcel()" style="background:var(--green);">&#128202; Excel</button><button class="btn btn-sm btn-outline" onclick="navigate(\'pages\')">All Pages</button><button class="btn btn-sm btn-outline" onclick="navigate(\'home\')">Back</button></div></div>';
 
   // ── Scorecards ──
   html += '<div class="stats-grid">';
@@ -488,207 +496,194 @@ function renderDashboard(el) {
   html += '<button class="btn btn-sm btn-outline" onclick="goTablePage(' + (state.tablePage + 1) + ')" ' + (state.tablePage >= totalTablePages - 1 ? 'disabled' : '') + '>Next &rsaquo;</button>';
   html += '</div></div>';
 
-  // ── Issue Sections (collapsed accordions with sentence summaries) ──
-  html += '<div class="card"><h3>Issue Details</h3>';
+  // ── Individual Issue Accordions (each issue is separate) ──
+  html += '<div class="card"><h3>Issues</h3>';
 
-  // Helper: build each issue section as a collapsed accordion
-  function issueAccordion(id, sev, sentence, bodyFn) {
-    html += '<div class="accordion" id="' + id + '"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-' + sev + '">' + sev + '</span><span style="font-size:13px;">' + sentence + '</span></div><span class="chevron">&#9654;</span></div>';
-    html += '<div class="accordion-body">';
-    bodyFn();
-    html += '</div></div>';
+  function issueAcc(id, sev, title, count, bodyHtml) {
+    if (!count) return;
+    html += '<div class="accordion" id="' + id + '"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-' + sev + '">' + sev + '</span><span style="font-size:13px;">' + title + '</span></div><div style="display:flex;align-items:center;gap:8px;"><span class="badge badge-' + sev + '">' + count + '</span><span class="chevron">&#9654;</span></div></div>';
+    html += '<div class="accordion-body">' + bodyHtml + '</div></div>';
+  }
+
+  // Missing Title
+  if (s.pages_missing_title) {
+    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
+    (s.issue_groups || []).filter(function(g){return g.category==='missing_title'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
+    b += '</tbody></table>';
+    issueAcc('sec-miss-title','critical','Missing Title Tag',s.pages_missing_title,b);
+  }
+
+  // Missing Meta Description
+  if (s.pages_missing_meta) {
+    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
+    (s.issue_groups || []).filter(function(g){return g.category==='missing_meta_description'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
+    b += '</tbody></table>';
+    issueAcc('sec-miss-meta','critical','Missing Meta Description',s.pages_missing_meta,b);
+  }
+
+  // Missing H1
+  if (s.pages_missing_h1) {
+    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
+    (s.issue_groups || []).filter(function(g){return g.category==='missing_h1'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
+    b += '</tbody></table>';
+    issueAcc('sec-miss-h1','critical','Missing H1 Tag',s.pages_missing_h1,b);
+  }
+
+  // Missing Viewport
+  if (s.pages_missing_viewport) {
+    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
+    (s.issue_groups || []).filter(function(g){return g.category==='missing_viewport'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
+    b += '</tbody></table>';
+    issueAcc('sec-miss-vp','critical','Missing Viewport Meta',s.pages_missing_viewport,b);
+  }
+
+  // Placeholder Content
+  if (s.placeholder_pages.length) {
+    var b = '<table><thead><tr><th>URL</th><th>Found</th></tr></thead><tbody>';
+    s.placeholder_pages.forEach(function(p) {
+      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td>'+(p.content||[]).slice(0,3).map(function(c){return '<code style="font-size:11px;background:var(--surface);padding:2px 6px;border-radius:4px;margin-right:4px">'+esc(c.match)+'</code>';}).join('')+'</td></tr>';
+    });
+    b += '</tbody></table>';
+    issueAcc('sec-placeholder','critical','Placeholder / Lorem Ipsum Content',s.placeholder_pages.length,b);
   }
 
   // Duplicate Titles
   if (s.duplicate_titles.length) {
-    issueAccordion('sec-dup-titles', 'warning', s.duplicate_titles.length + ' groups of pages share the same title tag', function() {
-      s.duplicate_titles.forEach(function(g) {
-        html += '<div style="margin-bottom:8px;"><strong style="font-size:12px;color:var(--text);">"' + esc(g.value.substring(0, 80)) + (g.value.length > 80 ? '...' : '') + '" (' + g.count + 'x)</strong><div style="margin-left:12px;">';
-        g.pages.forEach(function(p) { html += '<div style="font-size:12px;"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></div>'; });
-        html += '</div></div>';
-      });
+    var b = '';
+    s.duplicate_titles.forEach(function(g) {
+      b += '<div style="margin-bottom:8px;"><strong style="font-size:12px;color:var(--text);">"'+esc(g.value.substring(0,80))+(g.value.length>80?'...':'')+'" ('+g.count+'x)</strong><div style="margin-left:12px;">';
+      g.pages.forEach(function(p){b+='<div style="font-size:12px;"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></div>';});
+      b += '</div></div>';
     });
+    issueAcc('sec-dup-titles','warning','Duplicate Title Tags',s.duplicate_titles.length+' groups',b);
   }
 
   // Duplicate Meta Descriptions
   if (s.duplicate_meta_descriptions.length) {
-    issueAccordion('sec-dup-metas', 'warning', s.duplicate_meta_descriptions.length + ' groups of pages share the same meta description', function() {
-      s.duplicate_meta_descriptions.forEach(function(g) {
-        html += '<div style="margin-bottom:8px;"><strong style="font-size:12px;color:var(--text);">"' + esc(g.value.substring(0, 80)) + (g.value.length > 80 ? '...' : '') + '" (' + g.count + 'x)</strong><div style="margin-left:12px;">';
-        g.pages.forEach(function(p) { html += '<div style="font-size:12px;"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></div>'; });
-        html += '</div></div>';
-      });
+    var b = '';
+    s.duplicate_meta_descriptions.forEach(function(g) {
+      b += '<div style="margin-bottom:8px;"><strong style="font-size:12px;color:var(--text);">"'+esc(g.value.substring(0,80))+(g.value.length>80?'...':'')+'" ('+g.count+'x)</strong><div style="margin-left:12px;">';
+      g.pages.forEach(function(p){b+='<div style="font-size:12px;"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></div>';});
+      b += '</div></div>';
     });
-  }
-
-  // Status Code Breakdown
-  var statusSentence = (s.status_code_breakdown || []).map(function(c) { return c.count + ' pages returned HTTP ' + c.status_code; }).join(', ');
-  if (statusSentence) {
-    issueAccordion('sec-status', 'info', statusSentence, function() {
-      html += '<div style="display:flex;gap:12px;flex-wrap:wrap;">';
-      (s.status_code_breakdown || []).forEach(function(c) {
-        var badge = statusBadge(c.status_code);
-        var color = badge.replace('badge-', '');
-        html += '<div class="stat-card ' + color + '" style="min-width:100px;flex:0;"><div class="value">' + c.count + '</div><div class="label">HTTP ' + c.status_code + '</div></div>';
-      });
-      html += '</div>';
-    });
+    issueAcc('sec-dup-metas','warning','Duplicate Meta Descriptions',s.duplicate_meta_descriptions.length+' groups',b);
   }
 
   // Canonical Issues
   if (s.canonical_issues.length) {
-    issueAccordion('sec-canonical', 'warning', s.canonical_issues.length + ' pages have canonical tag issues', function() {
-      html += '<table><thead><tr><th>Page URL</th><th>Canonical URL</th><th>Issues</th></tr></thead><tbody>';
-      s.canonical_issues.forEach(function(c) {
-        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + c.page_id + ');return false">' + esc(c.url) + '</a></td><td class="url-cell">' + esc(c.canonical_url || 'none') + '</td><td>' + (c.issues || []).map(function(i) { return '<span class="badge badge-warning">' + i + '</span> '; }).join('') + '</td></tr>';
-      });
-      html += '</tbody></table>';
+    var b = '<table><thead><tr><th>Page URL</th><th>Canonical URL</th><th>Issues</th></tr></thead><tbody>';
+    s.canonical_issues.forEach(function(c) {
+      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+c.page_id+');return false">'+esc(c.url)+'</a></td><td class="url-cell">'+esc(c.canonical_url||'none')+'</td><td>'+(c.issues||[]).map(function(i){return '<span class="badge badge-warning">'+i+'</span> ';}).join('')+'</td></tr>';
     });
+    b += '</tbody></table>';
+    issueAcc('sec-canonical','warning','Canonical Tag Issues',s.canonical_issues.length,b);
   }
 
-  // Indexability
-  if (s.noindex_pages.length || s.nofollow_pages.length) {
-    var idxSentence = [];
-    if (s.noindex_pages.length) idxSentence.push(s.noindex_pages.length + ' pages are set to noindex');
-    if (s.nofollow_pages.length) idxSentence.push(s.nofollow_pages.length + ' pages have nofollow meta');
-    issueAccordion('sec-indexability', 'warning', idxSentence.join('; '), function() {
-      if (s.noindex_pages.length) {
-        html += '<h4 style="margin:4px 0 6px;font-size:12px;color:var(--warning)">Noindex Pages</h4>';
-        s.noindex_pages.forEach(function(p) { html += '<div style="font-size:12px;margin-bottom:2px;"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></div>'; });
-      }
-      if (s.nofollow_pages.length) {
-        html += '<h4 style="margin:8px 0 6px;font-size:12px;color:var(--warning)">Nofollow Meta Pages</h4>';
-        s.nofollow_pages.forEach(function(p) { html += '<div style="font-size:12px;margin-bottom:2px;"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></div>'; });
-      }
-    });
+  // Noindex Pages
+  if (s.noindex_pages.length) {
+    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
+    s.noindex_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>';});
+    b += '</tbody></table>';
+    issueAcc('sec-noindex','warning','Noindex Pages',s.noindex_pages.length,b);
   }
 
-  // Image Alt Text Issues
-  if (s.pages_missing_alt.length || (s.pages_empty_alt && s.pages_empty_alt.length)) {
-    var imgParts = [];
-    if (s.pages_missing_alt.length) imgParts.push(s.total_images_missing_alt + ' images across ' + s.pages_missing_alt.length + ' pages are missing alt attributes');
-    if (s.pages_empty_alt && s.pages_empty_alt.length) imgParts.push((s.total_images_empty_alt || 0) + ' images have empty alt text');
-    issueAccordion('sec-images', 'warning', imgParts.join('; '), function() {
-      if (s.pages_missing_alt.length) {
-        html += '<h4 style="margin:4px 0 6px;font-size:12px;color:var(--warning)">Missing Alt Attribute</h4>';
-        html += '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
-        s.pages_missing_alt.forEach(function(p) {
-          var sampleImg = p.sample_image_url ? '<a href="' + esc(p.sample_image_url) + '" target="_blank" style="font-size:11px;word-break:break-all;">' + esc(p.sample_image_url.split('/').pop().substring(0, 40)) + '</a>' : '—';
-          html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.missing_count + '</span></td><td>' + sampleImg + '</td><td>' + p.total_images + '</td></tr>';
-        });
-        html += '</tbody></table>';
-      }
-      if (s.pages_empty_alt && s.pages_empty_alt.length) {
-        html += '<h4 style="margin:8px 0 6px;font-size:12px;color:var(--warning)">Empty Alt Text</h4>';
-        html += '<table><thead><tr><th>Page URL</th><th>Empty Alt</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
-        s.pages_empty_alt.forEach(function(p) {
-          var sampleImg = p.sample_image_url ? '<a href="' + esc(p.sample_image_url) + '" target="_blank" style="font-size:11px;word-break:break-all;">' + esc(p.sample_image_url.split('/').pop().substring(0, 40)) + '</a>' : '—';
-          html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.empty_count + '</span></td><td>' + sampleImg + '</td><td>' + p.total_images + '</td></tr>';
-        });
-        html += '</tbody></table>';
-      }
+  // Nofollow Pages
+  if (s.nofollow_pages.length) {
+    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
+    s.nofollow_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>';});
+    b += '</tbody></table>';
+    issueAcc('sec-nofollow','warning','Nofollow Meta Pages',s.nofollow_pages.length,b);
+  }
+
+  // Images Missing Alt
+  if (s.pages_missing_alt.length) {
+    var b = '<table><thead><tr><th>Page URL</th><th>Missing</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
+    s.pages_missing_alt.forEach(function(p) {
+      var sampleImg = p.sample_image_url ? '<a href="'+esc(p.sample_image_url)+'" target="_blank" style="font-size:11px;word-break:break-all;">'+esc(p.sample_image_url.split('/').pop().substring(0,40))+'</a>' : '—';
+      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.missing_count+'</span></td><td>'+sampleImg+'</td><td>'+p.total_images+'</td></tr>';
     });
+    b += '</tbody></table>';
+    issueAcc('sec-img-noalt','warning','Images Missing Alt Attribute',s.total_images_missing_alt+' images on '+s.pages_missing_alt.length+' pages',b);
+  }
+
+  // Images Empty Alt
+  if (s.pages_empty_alt && s.pages_empty_alt.length) {
+    var b = '<table><thead><tr><th>Page URL</th><th>Empty Alt</th><th>Sample Image</th><th>Total</th></tr></thead><tbody>';
+    s.pages_empty_alt.forEach(function(p) {
+      var sampleImg = p.sample_image_url ? '<a href="'+esc(p.sample_image_url)+'" target="_blank" style="font-size:11px;word-break:break-all;">'+esc(p.sample_image_url.split('/').pop().substring(0,40))+'</a>' : '—';
+      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.empty_count+'</span></td><td>'+sampleImg+'</td><td>'+p.total_images+'</td></tr>';
+    });
+    b += '</tbody></table>';
+    issueAcc('sec-img-emptyalt','warning','Images With Empty Alt Text',(s.total_images_empty_alt||0)+' images',b);
   }
 
   // Hreflang Issues
   if (s.hreflang_issues.length) {
-    issueAccordion('sec-hreflang', 'warning', s.hreflang_issues.length + ' pages have hreflang implementation issues', function() {
-      html += '<table><thead><tr><th>Page URL</th><th>Issues</th></tr></thead><tbody>';
-      s.hreflang_issues.forEach(function(h) {
-        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + h.page_id + ');return false">' + esc(h.url) + '</a></td><td>' + (h.issues || []).map(function(i) { return '<div style="font-size:12px;color:var(--warning)">' + esc(i) + '</div>'; }).join('') + '</td></tr>';
-      });
-      html += '</tbody></table>';
+    var b = '<table><thead><tr><th>Page URL</th><th>Issues</th></tr></thead><tbody>';
+    s.hreflang_issues.forEach(function(h){
+      b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+h.page_id+');return false">'+esc(h.url)+'</a></td><td>'+(h.issues||[]).map(function(i){return '<div style="font-size:12px;color:var(--warning)">'+esc(i)+'</div>';}).join('')+'</td></tr>';
     });
+    b += '</tbody></table>';
+    issueAcc('sec-hreflang','warning','Hreflang Issues',s.hreflang_issues.length,b);
   }
 
-  // Content Issues
-  if (s.thin_content_pages.length || s.low_text_ratio_pages.length || s.placeholder_pages.length) {
-    var contentParts = [];
-    if (s.thin_content_pages.length) contentParts.push(s.thin_content_pages.length + ' pages have thin content (<300 words)');
-    if (s.low_text_ratio_pages.length) contentParts.push(s.low_text_ratio_pages.length + ' pages have low text-to-HTML ratio');
-    if (s.placeholder_pages.length) contentParts.push(s.placeholder_pages.length + ' pages contain placeholder/lorem ipsum text');
-    issueAccordion('sec-content', 'warning', contentParts.join('; '), function() {
-      if (s.thin_content_pages.length) {
-        html += '<h4 style="margin:4px 0 6px;font-size:12px;color:var(--warning)">Thin Content</h4>';
-        html += '<table><thead><tr><th>URL</th><th>Word Count</th></tr></thead><tbody>';
-        s.thin_content_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.word_count + ' words</span></td></tr>'; });
-        html += '</tbody></table>';
-      }
-      if (s.low_text_ratio_pages.length) {
-        html += '<h4 style="margin:8px 0 6px;font-size:12px;color:var(--warning)">Low Text-to-HTML Ratio</h4>';
-        html += '<table><thead><tr><th>URL</th><th>Ratio</th></tr></thead><tbody>';
-        s.low_text_ratio_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-critical">' + p.ratio + '%</span></td></tr>'; });
-        html += '</tbody></table>';
-      }
-      if (s.placeholder_pages.length) {
-        html += '<h4 style="margin:8px 0 6px;font-size:12px;color:var(--critical)">Placeholder / Lorem Ipsum</h4>';
-        html += '<table><thead><tr><th>URL</th><th>Found</th></tr></thead><tbody>';
-        s.placeholder_pages.forEach(function(p) {
-          html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td>' + (p.content || []).slice(0, 3).map(function(c) { return '<code style="font-size:11px;background:var(--surface);padding:2px 6px;border-radius:4px;margin-right:4px">' + esc(c.match) + '</code>'; }).join('') + '</td></tr>';
-        });
-        html += '</tbody></table>';
-      }
-    });
+  // Thin Content
+  if (s.thin_content_pages.length) {
+    var b = '<table><thead><tr><th>URL</th><th>Word Count</th></tr></thead><tbody>';
+    s.thin_content_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.word_count+' words</span></td></tr>';});
+    b += '</tbody></table>';
+    issueAcc('sec-thin','warning','Thin Content (<300 words)',s.thin_content_pages.length,b);
   }
 
-  // Missing Structure (title, meta, h1, viewport)
-  var structParts = [];
-  if (s.pages_missing_title) structParts.push(s.pages_missing_title + ' pages missing title');
-  if (s.pages_missing_meta) structParts.push(s.pages_missing_meta + ' pages missing meta description');
-  if (s.pages_missing_h1) structParts.push(s.pages_missing_h1 + ' pages missing H1');
-  if (s.pages_missing_viewport) structParts.push(s.pages_missing_viewport + ' pages missing viewport');
-  if (s.pages_without_schema) structParts.push(s.pages_without_schema + ' pages without schema markup');
-  if (structParts.length) {
-    issueAccordion('sec-structure', 'critical', structParts.join('; '), function() {
-      html += '<table><thead><tr><th>Issue</th><th>Count</th></tr></thead><tbody>';
-      if (s.pages_missing_title) html += '<tr><td>Missing Title</td><td><span class="badge badge-critical">' + s.pages_missing_title + '</span></td></tr>';
-      if (s.pages_missing_meta) html += '<tr><td>Missing Meta Description</td><td><span class="badge badge-critical">' + s.pages_missing_meta + '</span></td></tr>';
-      if (s.pages_missing_h1) html += '<tr><td>Missing H1</td><td><span class="badge badge-critical">' + s.pages_missing_h1 + '</span></td></tr>';
-      if (s.pages_missing_viewport) html += '<tr><td>Missing Viewport</td><td><span class="badge badge-critical">' + s.pages_missing_viewport + '</span></td></tr>';
-      if (s.pages_without_schema) html += '<tr><td>No Schema Markup</td><td><span class="badge badge-info">' + s.pages_without_schema + '</span></td></tr>';
-      html += '</tbody></table>';
-    });
+  // Low Text-to-HTML Ratio
+  if (s.low_text_ratio_pages.length) {
+    var b = '<table><thead><tr><th>URL</th><th>Ratio</th></tr></thead><tbody>';
+    s.low_text_ratio_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-critical">'+p.ratio+'%</span></td></tr>';});
+    b += '</tbody></table>';
+    issueAcc('sec-lowratio','warning','Low Text-to-HTML Ratio (<10%)',s.low_text_ratio_pages.length,b);
   }
 
   // Slow Pages
   if (s.slow_pages.length) {
-    issueAccordion('sec-slow', 'warning', s.slow_pages.length + ' pages take more than 3 seconds to respond', function() {
-      html += '<table><thead><tr><th>URL</th><th>Response Time</th></tr></thead><tbody>';
-      s.slow_pages.forEach(function(p) { html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td><span class="badge badge-warning">' + p.response_time.toFixed(2) + 's</span></td></tr>'; });
-      html += '</tbody></table>';
-    });
+    var b = '<table><thead><tr><th>URL</th><th>Response Time</th></tr></thead><tbody>';
+    s.slow_pages.forEach(function(p){b+='<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td><td><span class="badge badge-warning">'+p.response_time.toFixed(2)+'s</span></td></tr>';});
+    b += '</tbody></table>';
+    issueAcc('sec-slow','warning','Slow Pages (>3s response)',s.slow_pages.length,b);
+  }
+
+  // No Schema Markup
+  if (s.pages_without_schema) {
+    var b = '<table><thead><tr><th>URL</th></tr></thead><tbody>';
+    (s.issue_groups || []).filter(function(g){return g.category==='no_schema_markup'}).forEach(function(g){ g.pages.forEach(function(p){ b += '<tr><td class="url-cell"><a href="#" onclick="loadPage('+p.page_id+');return false">'+esc(p.url)+'</a></td></tr>'; }); });
+    b += '</tbody></table>';
+    issueAcc('sec-noschema','info','No Schema Markup',s.pages_without_schema,b);
+  }
+
+  // Status Code Breakdown
+  var statusBody = '<div style="display:flex;gap:12px;flex-wrap:wrap;">';
+  (s.status_code_breakdown || []).forEach(function(c) {
+    var badge = statusBadge(c.status_code);
+    var color = badge.replace('badge-', '');
+    statusBody += '<div class="stat-card ' + color + '" style="min-width:100px;flex:0;"><div class="value">' + c.count + '</div><div class="label">HTTP ' + c.status_code + '</div></div>';
+  });
+  statusBody += '</div>';
+  if (s.status_code_breakdown && s.status_code_breakdown.length) {
+    issueAcc('sec-status','info','Status Code Breakdown',s.status_code_breakdown.map(function(c){return c.count;}).reduce(function(a,b){return a+b;},0)+' pages',statusBody);
   }
 
   // Robots & Sitemaps
-  var robotsSentence = 'robots.txt ' + (s.robots_txt_status === 'found' ? 'found' : 'not found') + '; ' + ((s.sitemaps_found && s.sitemaps_found.length) ? s.sitemaps_found.length + ' sitemaps detected' : 'no sitemaps detected');
-  issueAccordion('sec-robots', 'info', robotsSentence, function() {
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
-    html += '<div><h4 style="margin-bottom:8px;font-size:12px;">robots.txt</h4><div class="sitemap-item"><span>Status</span><span class="badge ' + (s.robots_txt_status === 'found' ? 'badge-good' : 'badge-critical') + '">' + (s.robots_txt_status || 'unknown') + '</span></div></div>';
-    html += '<div><h4 style="margin-bottom:8px;font-size:12px;">Sitemaps</h4><div class="sitemap-list">';
-    if (s.sitemaps_found && s.sitemaps_found.length) {
-      s.sitemaps_found.forEach(function(sm) {
-        html += '<div class="sitemap-item"><span class="url">' + esc(sm.url) + '</span><span class="meta"><span class="badge badge-info">' + sm.type + '</span><span>' + (sm.urls_count || 0) + ' URLs</span></span></div>';
-      });
-    } else {
-      html += '<div style="color:var(--text2);font-size:12px;">No sitemaps detected</div>';
-    }
-    html += '</div></div></div>';
-  });
-
-  // All Issues by Type
-  if ((s.issue_groups || []).length) {
-    (s.issue_groups || []).forEach(function(g) {
-      html += '<div class="accordion"><div class="accordion-header" onclick="toggleAcc(this)"><div class="left"><span class="badge badge-' + g.severity + '">' + g.severity + '</span><span style="font-size:13px;">' + fmtType(g.category) + ' — ' + g.count + ' page' + (g.count > 1 ? 's' : '') + ' affected</span></div><span class="chevron">&#9654;</span></div>';
-      html += '<div class="accordion-body"><table><thead><tr><th>URL</th><th>Detail</th></tr></thead><tbody>';
-      g.pages.slice(0, 30).forEach(function(p) {
-        html += '<tr><td class="url-cell"><a href="#" onclick="loadPage(' + p.page_id + ');return false">' + esc(p.url) + '</a></td><td style="font-size:12px;color:var(--text2)">' + esc(p.detail) + '</td></tr>';
-      });
-      if (g.count > 30) html += '<tr><td colspan="2" style="color:var(--text2);font-size:12px;">...and ' + (g.count - 30) + ' more</td></tr>';
-      html += '</tbody></table></div></div>';
+  var robotsBody = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
+  robotsBody += '<div><h4 style="margin-bottom:8px;font-size:12px;">robots.txt</h4><div class="sitemap-item"><span>Status</span><span class="badge '+(s.robots_txt_status==='found'?'badge-good':'badge-critical')+'">'+(s.robots_txt_status||'unknown')+'</span></div></div>';
+  robotsBody += '<div><h4 style="margin-bottom:8px;font-size:12px;">Sitemaps</h4><div class="sitemap-list">';
+  if (s.sitemaps_found && s.sitemaps_found.length) {
+    s.sitemaps_found.forEach(function(sm){
+      robotsBody += '<div class="sitemap-item"><span class="url">'+esc(sm.url)+'</span><span class="meta"><span class="badge badge-info">'+sm.type+'</span><span>'+(sm.urls_count||0)+' URLs</span></span></div>';
     });
-  }
+  } else { robotsBody += '<div style="color:var(--text2);font-size:12px;">No sitemaps detected</div>'; }
+  robotsBody += '</div></div></div>';
+  issueAcc('sec-robots','info','Robots.txt & Sitemaps',(s.sitemaps_found?s.sitemaps_found.length:0)+' sitemaps',robotsBody);
 
-  html += '</div>'; // close Issue Details card
+  html += '</div>'; // close Issues card
 
   el.innerHTML = html;
 }
@@ -731,19 +726,22 @@ function scrollToSec(id) {
 
 function statusBadge(code) {
   if (!code) return 'badge-critical';
-  if (code >= 200 && code < 300) return 'badge-good';
-  if (code === 301) return 'badge-info';      // permanent redirect — blue
-  if (code === 302 || code === 307 || code === 308) return 'badge-warning';  // temp redirect — orange
-  if (code === 404) return 'badge-critical';   // not found — red
-  if (code === 403) return 'badge-warning';    // forbidden — orange
-  if (code >= 400 && code < 500) return 'badge-warning';
-  if (code >= 500) return 'badge-critical';    // server error — red
+  if (code >= 200 && code < 300) return 'badge-2xx';
+  if (code >= 300 && code < 400) return 'badge-3xx';
+  if (code >= 400 && code < 500) return 'badge-4xx';
+  if (code >= 500) return 'badge-5xx';
   return 'badge-info';
 }
 
 function exportPDF() {
   if (!state.crawl) return;
   var url = API + '/crawls/' + state.crawl.id + '/export/pdf';
+  window.open(url, '_blank');
+}
+
+function exportExcel() {
+  if (!state.crawl) return;
+  var url = API + '/crawls/' + state.crawl.id + '/export/excel';
   window.open(url, '_blank');
 }
 

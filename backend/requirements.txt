@@ -13,3 +13,4 @@ xmltodict
 validators
 greenlet
 reportlab
+openpyxl
