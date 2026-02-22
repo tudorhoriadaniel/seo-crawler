@@ -255,19 +255,12 @@ class CrawlEngine:
 
     async def _worker(self):
         """Worker that processes URLs from the queue."""
-        # Use TWO clients: one that does NOT follow redirects (to capture 301/302),
-        # and one that does follow them (to get the final HTML).
         async with httpx.AsyncClient(
-            timeout=self.TIMEOUT,
-            follow_redirects=False,
-            verify=False,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; SEOCrawlerBot/1.0; +https://ai.tudordaniel.ro)"},
-        ) as client_nofollow, httpx.AsyncClient(
             timeout=self.TIMEOUT,
             follow_redirects=True,
             verify=False,
             headers={"User-Agent": "Mozilla/5.0 (compatible; SEOCrawlerBot/1.0; +https://ai.tudordaniel.ro)"},
-        ) as client_follow:
+        ) as client:
             while True:
                 # Check if stopped
                 if self._stopped:
@@ -297,7 +290,7 @@ class CrawlEngine:
                         continue
 
                     logger.info(f"Crawling [{len(self.visited)}]: {url}")
-                    await self._crawl_page(client_nofollow, client_follow, url)
+                    await self._crawl_page(client, url)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -305,107 +298,70 @@ class CrawlEngine:
                 finally:
                     self.queue.task_done()
 
-    async def _crawl_page(self, client_nofollow: httpx.AsyncClient, client_follow: httpx.AsyncClient, url: str):
-        """Fetch and analyze a single page."""
+    async def _crawl_page(self, client: httpx.AsyncClient, url: str):
+        """Fetch and analyze a single page.
+
+        Uses follow_redirects=True so if a URL 301s we transparently
+        land on the final 200 page and analyze that.  The redirect is
+        noted as an issue on the page but does NOT consume an extra slot.
+        """
         start = time.monotonic()
 
-        # First request: no redirects, to capture the real status code
         try:
-            resp_initial = await client_nofollow.get(url)
+            resp = await client.get(url)
         except httpx.RequestError as e:
             logger.warning(f"Request failed for {url}: {e}")
             return
 
-        original_status = resp_initial.status_code
-
-        # If it's a redirect, record it but only follow if target is same domain
-        if original_status in (301, 302, 303, 307, 308):
-            redirect_target = resp_initial.headers.get("location", "")
-            if redirect_target:
-                redirect_target = urljoin(url, redirect_target).split("#")[0].split("?")[0].rstrip("/")
-
-            response_time = time.monotonic() - start
-            logger.info(f"URL {url} redirects ({original_status}) to {redirect_target}")
-
-            # Save the redirect as a page record (no HTML analysis needed)
-            redirect_result = {
-                "url": url,
-                "status_code": original_status,
-                "response_time": response_time,
-                "content_length": 0,
-                "title": None, "title_length": 0,
-                "meta_description": None, "meta_description_length": 0,
-                "canonical_url": None, "canonical_issues": None,
-                "robots_meta": None,
-                "is_noindex": False, "is_nofollow_meta": False,
-                "h1_count": 0, "h1_texts": None,
-                "h2_count": 0, "h3_count": 0, "h4_count": 0, "h5_count": 0, "h6_count": 0,
-                "total_images": 0, "images_without_alt": 0, "images_without_alt_urls": None,
-                "images_with_empty_alt": 0, "images_with_empty_alt_urls": None,
-                "internal_links": 0, "external_links": 0,
-                "nofollow_links": 0, "nofollow_internal_links": None,
-                "broken_links": 0,
-                "has_schema_markup": False, "schema_types": None,
-                "has_viewport_meta": False,
-                "word_count": 0, "has_lazy_loading": False,
-                "code_to_text_ratio": None, "html_size": None, "text_size": None,
-                "og_title": None, "og_description": None, "og_image": None,
-                "has_hreflang": False, "hreflang_entries": None, "hreflang_issues": None,
-                "has_placeholders": False, "placeholder_content": None,
-                "redirect_target": redirect_target,
-                "issues": [{
-                    "severity": "warning",
-                    "type": "redirect",
-                    "message": f"URL redirects ({original_status}) to {redirect_target}"
-                }],
-                "score": 0,
-            }
-            try:
-                await self._save_page(redirect_result, "redirect")
-            except Exception as e:
-                logger.error(f"DB save failed for redirect {url}: {e}")
-
-            # If the redirect target is on our domain, add it to crawl queue
-            if redirect_target:
-                target_parsed = urlparse(redirect_target)
-                if target_parsed.netloc == self.domain and redirect_target not in self.visited:
-                    if len(self.visited) < self.MAX_PAGES:
-                        try:
-                            self.queue.put_nowait(redirect_target)
-                            logger.info(f"Queued redirect target (same domain): {redirect_target}")
-                        except asyncio.QueueFull:
-                            pass
-                else:
-                    logger.info(f"Skipped redirect target (off-domain): {redirect_target}")
-
-            # Update crawl progress and return — don't analyze redirect HTML
-            try:
-                await self._update_crawl(pages_crawled=len(self.visited))
-            except Exception:
-                pass
-            return
-
-        # Non-redirect: normal page processing
-        resp = resp_initial
         response_time = time.monotonic() - start
+        final_url = str(resp.url).rstrip("/")
+        final_domain = urlparse(final_url).netloc
+        final_status = resp.status_code
+
+        # If we were redirected, figure out where we ended up
+        was_redirected = final_url != url.rstrip("/")
+
+        if was_redirected:
+            logger.info(f"URL {url} redirected to {final_url} (status {final_status})")
+
+            # If the final destination is off our domain, skip it entirely
+            if final_domain != self.domain:
+                logger.info(f"Redirect landed off-domain ({final_domain}), skipping")
+                return
+
+            # Mark the final URL as visited too so we don't crawl it again
+            async with self._lock:
+                self.visited.add(final_url)
+
         content_type = resp.headers.get("content-type", "")
 
         if "text/html" not in content_type:
-            logger.info(f"Skipping non-HTML: {url} ({content_type})")
+            logger.info(f"Skipping non-HTML: {final_url} ({content_type})")
             return
 
         html = resp.text
-        logger.info(f"Got {len(html)} bytes from {url} (status {original_status})")
+        logger.info(f"Got {len(html)} bytes from {final_url} (status {final_status})")
 
-        # Run SEO analysis
-        analyzer = SEOAnalyzer(url, html, original_status, response_time)
+        # Run SEO analysis on the FINAL page (the actual 200 content)
+        analyzer = SEOAnalyzer(final_url, html, final_status, response_time)
         result = analyzer.analyze()
 
-        # Save to DB (each save uses its own session)
+        # If there was a redirect, note it as an issue on this page
+        if was_redirected:
+            result["redirect_target"] = final_url
+            # Override the URL to the final destination (that's what we actually analyzed)
+            result["url"] = final_url
+            result.setdefault("issues", []).append({
+                "severity": "info",
+                "type": "redirect",
+                "message": f"Reached via redirect from {url}"
+            })
+
+        # Save to DB
         try:
             await self._save_page(result, content_type)
         except Exception as e:
-            logger.error(f"DB save failed for {url}: {e}")
+            logger.error(f"DB save failed for {final_url}: {e}")
             return
 
         # Update crawl progress
@@ -421,7 +377,7 @@ class CrawlEngine:
             href = a_tag["href"]
             if href.startswith(("#", "mailto:", "tel:", "javascript:")):
                 continue
-            full_url = urljoin(url, href).split("#")[0].split("?")[0].rstrip("/")
+            full_url = urljoin(final_url, href).split("#")[0].split("?")[0].rstrip("/")
             parsed = urlparse(full_url)
             if parsed.netloc == self.domain and full_url not in self.visited:
                 if len(self.visited) < self.MAX_PAGES:
@@ -430,4 +386,4 @@ class CrawlEngine:
                         discovered += 1
                     except asyncio.QueueFull:
                         pass
-        logger.info(f"Discovered {discovered} new URLs from {url}")
+        logger.info(f"Discovered {discovered} new URLs from {final_url}")
