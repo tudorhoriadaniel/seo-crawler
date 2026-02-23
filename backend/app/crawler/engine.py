@@ -25,6 +25,11 @@ logging.basicConfig(level=logging.INFO)
 active_crawls: dict[int, "CrawlEngine"] = {}
 
 
+def _normalize_domain(netloc: str) -> str:
+    """Strip 'www.' prefix so www.example.com and example.com match."""
+    return netloc.lower().removeprefix("www.")
+
+
 class CrawlEngine:
     """Async crawler that discovers pages and runs SEO analysis."""
 
@@ -36,6 +41,7 @@ class CrawlEngine:
         self.crawl_id = crawl_id
         self.base_url = base_url.rstrip("/")
         self.domain = urlparse(base_url).netloc
+        self._base_domain = _normalize_domain(self.domain)
         self.visited: set[str] = set()
         self.queue: asyncio.Queue = asyncio.Queue()
         self.robots_parser: Optional[RobotsParser] = None
@@ -150,6 +156,7 @@ class CrawlEngine:
                     )
                     self.base_url = final_url
                     self.domain = final_domain
+                    self._base_domain = _normalize_domain(final_domain)
                 elif final_url != self.base_url:
                     logger.info(f"Start URL resolved to: {final_url}")
                     self.base_url = final_url
@@ -211,7 +218,7 @@ class CrawlEngine:
             if self.base_url not in self.visited:
                 self.queue.put_nowait(self.base_url)
             for url in sitemap_urls[:self.MAX_PAGES]:
-                if url not in self.visited and urlparse(url).netloc == self.domain:
+                if url not in self.visited and _normalize_domain(urlparse(url).netloc) == self._base_domain:
                     self.queue.put_nowait(url)
 
             logger.info(f"Queue seeded with {self.queue.qsize()} URLs. Starting workers...")
@@ -328,7 +335,7 @@ class CrawlEngine:
             logger.info(f"URL {url} redirected ({original_status}) to {final_url} (status {final_status})")
 
             # If the final destination is off our domain, skip entirely
-            if final_domain != self.domain:
+            if _normalize_domain(final_domain) != self._base_domain:
                 logger.info(f"Redirect landed off-domain ({final_domain}), skipping")
                 return
 
@@ -431,7 +438,7 @@ class CrawlEngine:
                 continue
             full_url = urljoin(analyze_url, href).split("#")[0].split("?")[0].rstrip("/")
             parsed = urlparse(full_url)
-            if parsed.netloc == self.domain and full_url not in self.visited:
+            if _normalize_domain(parsed.netloc) == self._base_domain and full_url not in self.visited:
                 if len(self.visited) < self.MAX_PAGES:
                     try:
                         self.queue.put_nowait(full_url)
