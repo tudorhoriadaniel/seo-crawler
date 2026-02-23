@@ -636,6 +636,36 @@ function renderDashboard(el) {
   robotsBody += '</div></div></div>';
   issueAcc('sec-robots','info','Robots.txt & Sitemaps',(s.sitemaps_found?s.sitemaps_found.length:0)+' sitemaps',robotsBody);
 
+  // Bot Access Analysis
+  if (s.bot_access && s.bot_access.length) {
+    var blocked = s.bot_access.filter(function(b){ return b.status==='blocked'; }).length;
+    var partial = s.bot_access.filter(function(b){ return b.status==='partially_blocked'; }).length;
+    var allowed = s.bot_access.filter(function(b){ return b.status==='allowed'; }).length;
+    var botLabel = blocked+' blocked, '+partial+' partial, '+allowed+' allowed';
+
+    var categories = ['Search Engine','AI / LLM','SEO Tool','Social Media'];
+    var botBody = '';
+    categories.forEach(function(cat){
+      var bots = s.bot_access.filter(function(b){ return b.category===cat; });
+      if (!bots.length) return;
+      botBody += '<h4 style="margin:12px 0 6px;font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;">'+esc(cat)+'</h4>';
+      botBody += '<table><thead><tr><th>Bot</th><th>Status</th><th>Rules</th></tr></thead><tbody>';
+      bots.forEach(function(b){
+        var badge = 'badge-good';
+        var label = 'Allowed';
+        if (b.status==='blocked') { badge='badge-critical'; label='Blocked'; }
+        else if (b.status==='partially_blocked') { badge='badge-warning'; label='Partial'; }
+        var rules = '';
+        if (b.disallow && b.disallow.length) rules += b.disallow.map(function(r){ return 'Disallow: '+esc(r); }).join(', ');
+        if (b.allow && b.allow.length) rules += (rules?', ':'') + b.allow.map(function(r){ return 'Allow: '+esc(r); }).join(', ');
+        if (!rules) rules = '<span style="color:var(--text2)">No specific rules</span>';
+        botBody += '<tr><td><strong>'+esc(b.name)+'</strong></td><td><span class="badge '+badge+'">'+label+'</span></td><td style="font-size:11px;">'+rules+'</td></tr>';
+      });
+      botBody += '</tbody></table>';
+    });
+    issueAcc('sec-bots','info','Bot Access Analysis (robots.txt)',botLabel,botBody);
+  }
+
   html += '</div>'; // close Issues card
 
   el.innerHTML = html;

@@ -16,8 +16,18 @@ from app.schemas.schemas import (
     DuplicateGroup, StatusCodeGroup, IssueGroup,
 )
 from app.crawler.engine import CrawlEngine, active_crawls
+from app.crawler.robots import RobotsParser
 
 router = APIRouter()
+
+
+def _analyze_robots_bots(robots_content: str | None) -> list[dict]:
+    """Re-parse stored robots.txt content and analyze bot access."""
+    if not robots_content:
+        return []
+    parser = RobotsParser("")
+    parser._parse(robots_content)
+    return parser.analyze_bot_access()
 
 
 # ─── Projects ───────────────────────────────────────────────
@@ -440,6 +450,7 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
         "avg_response_time": round(avg_resp, 3),
         "slow_pages": slow_pages,
         "robots_txt_status": crawl.robots_txt_status,
+        "bot_access": _analyze_robots_bots(crawl.robots_txt_content),
         "sitemaps_found": crawl.sitemaps_found,
         "pages_without_schema": no_schema,
         "pages_missing_canonical": missing_canonical,
