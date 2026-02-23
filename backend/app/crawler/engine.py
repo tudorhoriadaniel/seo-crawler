@@ -1,5 +1,12 @@
 """
 Crawl Engine — discovers and crawls pages on a website.
+
+Behavior modeled after Screaming Frog:
+- URLs are kept exactly as discovered / returned by the server
+- A normalized set is used for deduplication (lowercase, strip www., strip trailing slash)
+- Redirects are followed transparently — only the final page is saved
+- 4xx/5xx pages are saved with no SEO issues
+- Link discovery extracts <a>, <link rel=alternate/canonical>, <area>, <iframe>
 """
 import asyncio
 import time
@@ -30,6 +37,15 @@ def _normalize_domain(netloc: str) -> str:
     return netloc.lower().removeprefix("www.")
 
 
+def _normalize_url(url: str) -> str:
+    """Normalize a URL for deduplication.
+    Lowercase, strip www., strip trailing slash, drop fragment & query."""
+    parsed = urlparse(url.lower())
+    netloc = parsed.netloc.removeprefix("www.")
+    path = parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{netloc}{path}"
+
+
 class CrawlEngine:
     """Async crawler that discovers pages and runs SEO analysis."""
 
@@ -42,15 +58,25 @@ class CrawlEngine:
         self.base_url = base_url.rstrip("/")
         self.domain = urlparse(base_url).netloc
         self._base_domain = _normalize_domain(self.domain)
-        self.visited: set[str] = set()
+        # Normalized set for deduplication — prevents crawling same page twice
+        self._visited_normalized: set[str] = set()
         self.queue: asyncio.Queue = asyncio.Queue()
         self.robots_parser: Optional[RobotsParser] = None
         self._lock = asyncio.Lock()
+        self._page_count = 0
         # Pause/stop control
         self._paused = asyncio.Event()
         self._paused.set()  # not paused by default (set = running)
         self._stopped = False
         self._workers: list[asyncio.Task] = []
+
+    def _is_visited(self, url: str) -> bool:
+        """Check if a normalized version of this URL was already crawled."""
+        return _normalize_url(url) in self._visited_normalized
+
+    def _mark_visited(self, url: str):
+        """Mark a URL as visited (stores normalized form)."""
+        self._visited_normalized.add(_normalize_url(url))
 
     def pause(self):
         """Pause crawling — workers will wait until resumed."""
@@ -163,6 +189,16 @@ class CrawlEngine:
         except httpx.RequestError as e:
             logger.warning(f"Could not resolve start URL: {e} — using original")
 
+    def _enqueue(self, url: str):
+        """Add a URL to the crawl queue if not already visited and within limits."""
+        if not self._is_visited(url) and self._page_count < self.MAX_PAGES:
+            parsed = urlparse(url)
+            if _normalize_domain(parsed.netloc) == self._base_domain:
+                try:
+                    self.queue.put_nowait(url)
+                except asyncio.QueueFull:
+                    pass
+
     async def run(self, resume_from_stopped: bool = False):
         """Start the crawl."""
         logger.info(f"Starting crawl {self.crawl_id} for {self.base_url} (resume={resume_from_stopped})")
@@ -187,9 +223,10 @@ class CrawlEngine:
                     result = await db.execute(
                         select(Page.url).where(Page.crawl_id == self.crawl_id)
                     )
-                    existing_urls = {row[0] for row in result.fetchall()}
-                    self.visited = existing_urls
-                    logger.info(f"Resumed with {len(existing_urls)} already-crawled URLs")
+                    for row in result.fetchall():
+                        self._mark_visited(row[0])
+                    self._page_count = len(self._visited_normalized)
+                    logger.info(f"Resumed with {self._page_count} already-crawled URLs")
 
             # Parse robots.txt
             logger.info("Fetching robots.txt...")
@@ -215,11 +252,9 @@ class CrawlEngine:
             )
 
             # Seed the queue — only URLs matching our resolved domain
-            if self.base_url not in self.visited:
-                self.queue.put_nowait(self.base_url)
+            self._enqueue(self.base_url)
             for url in sitemap_urls[:self.MAX_PAGES]:
-                if url not in self.visited and _normalize_domain(urlparse(url).netloc) == self._base_domain:
-                    self.queue.put_nowait(url)
+                self._enqueue(url)
 
             logger.info(f"Queue seeded with {self.queue.qsize()} URLs. Starting workers...")
 
@@ -246,10 +281,10 @@ class CrawlEngine:
             await self._update_crawl(
                 status=final_status,
                 completed_at=datetime.datetime.utcnow(),
-                pages_crawled=len(self.visited),
-                pages_total=len(self.visited),
+                pages_crawled=self._page_count,
+                pages_total=self._page_count,
             )
-            logger.info(f"Crawl {final_status}. {len(self.visited)} pages crawled.")
+            logger.info(f"Crawl {final_status}. {self._page_count} pages crawled.")
 
         except Exception as e:
             logger.error(f"Crawl failed: {e}", exc_info=True)
@@ -287,16 +322,16 @@ class CrawlEngine:
 
                     # Thread-safe check: skip if already visited or at max
                     async with self._lock:
-                        if url in self.visited or len(self.visited) >= self.MAX_PAGES:
+                        if self._is_visited(url) or self._page_count >= self.MAX_PAGES:
                             continue
-                        self.visited.add(url)
+                        self._mark_visited(url)
 
                     # Check robots.txt
                     if self.robots_parser and not self.robots_parser.is_allowed(url):
                         logger.info(f"Blocked by robots.txt: {url}")
                         continue
 
-                    logger.info(f"Crawling [{len(self.visited)}]: {url}")
+                    logger.info(f"Crawling [{self._page_count}]: {url}")
                     await self._crawl_page(client, url)
                 except asyncio.CancelledError:
                     raise
@@ -308,9 +343,10 @@ class CrawlEngine:
     async def _crawl_page(self, client: httpx.AsyncClient, url: str):
         """Fetch and analyze a single page.
 
-        Uses follow_redirects=True so 301s resolve transparently.
-        Checks resp.history to detect redirects and records the original
-        status code.  4xx/5xx pages are saved as lightweight records.
+        Uses follow_redirects=True so redirects resolve in one request.
+        Only the FINAL page is saved (with the final URL as it appears on
+        the server).  No separate 3xx records — just like Screaming Frog
+        when it resolves a chain to the final destination.
         """
         start = time.monotonic()
 
@@ -321,39 +357,46 @@ class CrawlEngine:
             return
 
         response_time = time.monotonic() - start
-        final_url = str(resp.url).rstrip("/")
+
+        # Keep the REAL final URL exactly as the server returned it
+        final_url = str(resp.url)
         final_domain = urlparse(final_url).netloc
         final_status = resp.status_code
 
-        # Detect redirects from the response history
-        # Ignore trivial trailing-slash redirects (same URL after normalization)
-        was_redirected = len(resp.history) > 0 and final_url != url
-        original_status = resp.history[0].status_code if len(resp.history) > 0 else final_status
+        # Detect redirects
+        was_redirected = len(resp.history) > 0
 
-        # ── Handle real redirects: follow transparently, only save the final page ──
         if was_redirected:
-            logger.info(f"URL {url} redirected ({original_status}) to {final_url} (status {final_status})")
+            original_status = resp.history[0].status_code
+            logger.info(f"URL {url} redirected ({original_status}) -> {final_url} (status {final_status})")
 
             # If the final destination is off our domain, skip entirely
             if _normalize_domain(final_domain) != self._base_domain:
                 logger.info(f"Redirect landed off-domain ({final_domain}), skipping")
                 return
 
-            # Check if the final URL was already crawled — skip if so
-            async with self._lock:
-                if final_url in self.visited:
-                    return
-                self.visited.add(final_url)
+            # For REAL redirects (different normalized URL, e.g. /en/contact -> /en/kontakt):
+            # check if we already crawled the final URL from a different entry point
+            norm_final = _normalize_url(final_url)
+            norm_original = _normalize_url(url)
+            if norm_final != norm_original:
+                # Real redirect — different page
+                async with self._lock:
+                    if norm_final in self._visited_normalized:
+                        return  # final page was already crawled directly
+                    self._mark_visited(final_url)
+            # For trivial redirects (trailing slash, www, etc.): same normalized URL
+            # The worker already marked it visited — just fall through to analyze
 
-            # Fall through to analyze the final (200) page below — no 301 record saved
+            # Fall through to save/analyze the final page
 
         content_type = resp.headers.get("content-type", "")
 
         # ── 4xx/5xx errors: save minimal record, NO SEO issues ──
         if final_status >= 400:
-            logger.info(f"Error status {final_status} for {url}")
+            logger.info(f"Error status {final_status} for {final_url}")
             error_result = {
-                "url": final_url if was_redirected else url,
+                "url": final_url,
                 "status_code": final_status,
                 "response_time": response_time, "content_length": len(resp.content),
                 "title": None, "title_length": 0,
@@ -376,10 +419,12 @@ class CrawlEngine:
             }
             try:
                 await self._save_page(error_result, content_type or "error")
+                async with self._lock:
+                    self._page_count += 1
             except Exception as e:
-                logger.error(f"DB save failed for error page {url}: {e}")
+                logger.error(f"DB save failed for error page {final_url}: {e}")
             try:
-                await self._update_crawl(pages_crawled=len(self.visited))
+                await self._update_crawl(pages_crawled=self._page_count)
             except Exception:
                 pass
             return
@@ -388,30 +433,30 @@ class CrawlEngine:
             logger.info(f"Skipping non-HTML: {final_url} ({content_type})")
             return
 
-        # ── Analyze the page (the actual 200 content) ──
+        # ── Analyze the page (the final 200 content) ──
         html = resp.text
-        analyze_url = final_url if was_redirected else url
-        logger.info(f"Got {len(html)} bytes from {analyze_url} (status {final_status})")
+        logger.info(f"Got {len(html)} bytes from {final_url} (status {final_status})")
 
-        analyzer = SEOAnalyzer(analyze_url, html, final_status, response_time)
+        analyzer = SEOAnalyzer(final_url, html, final_status, response_time)
         result = analyzer.analyze()
 
-        # Save to DB — NO redirect issues appended (redirect was saved separately)
+        # Save to DB
         try:
             await self._save_page(result, content_type)
+            async with self._lock:
+                self._page_count += 1
         except Exception as e:
-            logger.error(f"DB save failed for {analyze_url}: {e}")
+            logger.error(f"DB save failed for {final_url}: {e}")
             return
 
         # Update crawl progress
         try:
-            await self._update_crawl(pages_crawled=len(self.visited))
+            await self._update_crawl(pages_crawled=self._page_count)
         except Exception as e:
             logger.error(f"Progress update failed: {e}")
 
-        # Discover new internal links from ALL sources on the page
+        # ── Discover new internal links from ALL sources on the page ──
         soup = BeautifulSoup(html, "lxml")
-        discovered = 0
         found_hrefs = set()
 
         # 1. All <a href="..."> links
@@ -428,21 +473,17 @@ class CrawlEngine:
         for tag in soup.find_all("area", href=True):
             found_hrefs.add(tag["href"])
 
-        # 4. <iframe src="..."> on same domain (rare but possible)
+        # 4. <iframe src="..."> on same domain
         for tag in soup.find_all("iframe", src=True):
             found_hrefs.add(tag["src"])
 
-        # Queue all discovered same-domain URLs
+        # Queue all discovered same-domain URLs (keep URLs as-is, no stripping)
+        discovered = 0
         for href in found_hrefs:
             if href.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
                 continue
-            full_url = urljoin(analyze_url, href).split("#")[0].split("?")[0].rstrip("/")
-            parsed = urlparse(full_url)
-            if _normalize_domain(parsed.netloc) == self._base_domain and full_url not in self.visited:
-                if len(self.visited) < self.MAX_PAGES:
-                    try:
-                        self.queue.put_nowait(full_url)
-                        discovered += 1
-                    except asyncio.QueueFull:
-                        pass
-        logger.info(f"Discovered {discovered} new URLs from {analyze_url}")
+            full_url = urljoin(final_url, href).split("#")[0].split("?")[0]
+            self._enqueue(full_url)
+            discovered += 1
+
+        logger.info(f"Discovered {discovered} new URLs from {final_url}")
