@@ -8,19 +8,16 @@ from bs4 import BeautifulSoup
 
 
 # Placeholder patterns to detect dev/test content
-# NOTE: $variable only matches $ followed by a letter (not $0, $9.99 prices)
+# Only match clear, unambiguous placeholder text — no framework syntax ($var, {{ }})
 PLACEHOLDER_PATTERNS = [
-    r'\$\{[a-zA-Z_]\w*\}',    # ${title}, ${heading}
-    r'\$[a-zA-Z_]\w*',        # $heading, $title (but NOT $0, $9, $99.99)
-    r'\{\{\s*\w+\s*\}\}',     # {{ heading }}
     r'lorem\s+ipsum',          # lorem ipsum
     r'dolor\s+sit\s+amet',     # dolor sit amet
+    r'consectetur\s+adipiscing',  # consectetur adipiscing
     r'TODO:?\s',               # TODO items
     r'FIXME:?\s',              # FIXME items
-    r'XXX:?\s',                # XXX markers
-    r'sample\s+text',          # sample text
     r'your\s+(company|name|title|heading|text)\s+here',  # "Your company here"
-    r'insert\s+\w+\s+here',   # "Insert text here"
+    r'insert\s+(your\s+)?\w+\s+here',   # "Insert text here"
+    r'placeholder\s+text',     # "placeholder text"
 ]
 PLACEHOLDER_RE = re.compile('|'.join(PLACEHOLDER_PATTERNS), re.IGNORECASE)
 
