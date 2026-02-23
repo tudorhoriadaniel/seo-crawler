@@ -319,10 +319,11 @@ class CrawlEngine:
         final_status = resp.status_code
 
         # Detect redirects from the response history
-        was_redirected = len(resp.history) > 0
-        original_status = resp.history[0].status_code if was_redirected else final_status
+        # Ignore trivial trailing-slash redirects (same URL after normalization)
+        was_redirected = len(resp.history) > 0 and final_url != url
+        original_status = resp.history[0].status_code if len(resp.history) > 0 else final_status
 
-        # ── Handle redirects: follow transparently, only save the final page ──
+        # ── Handle real redirects: follow transparently, only save the final page ──
         if was_redirected:
             logger.info(f"URL {url} redirected ({original_status}) to {final_url} (status {final_status})")
 
