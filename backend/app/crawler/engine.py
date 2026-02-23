@@ -190,11 +190,58 @@ class CrawlEngine:
         except httpx.RequestError as e:
             logger.warning(f"Could not resolve start URL: {e} — using original")
 
+    # File extensions to skip — these are never HTML pages
+    _SKIP_EXTENSIONS = frozenset((
+        # Data / API
+        '.json', '.xml', '.rss', '.atom', '.rdf',
+        # Stylesheets / Scripts
+        '.css', '.js', '.mjs', '.ts', '.map',
+        # Documents / Archives
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        '.zip', '.gz', '.tar', '.rar', '.7z', '.bz2',
+        # Images
+        '.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.ico', '.bmp', '.tiff', '.avif',
+        # Fonts
+        '.woff', '.woff2', '.ttf', '.eot', '.otf',
+        # Media
+        '.mp3', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ogg', '.wav',
+        # Other
+        '.exe', '.dmg', '.apk', '.ics', '.vcf', '.csv', '.txt', '.log',
+    ))
+
+    # URL path prefixes to skip — known non-HTML endpoints
+    _SKIP_PATH_PREFIXES = (
+        '/wp-json/', '/wp-json', '/feed/', '/feed',
+        '/xmlrpc.php', '/wp-admin/',
+        '/api/', '/_api/',
+    )
+
+    def _should_skip_url(self, url: str) -> bool:
+        """Return True if the URL points to a non-HTML resource."""
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+
+        # Check file extension
+        dot_pos = path.rfind('.')
+        if dot_pos != -1:
+            ext = path[dot_pos:]
+            if ext in self._SKIP_EXTENSIONS:
+                return True
+
+        # Check known non-HTML path prefixes
+        for prefix in self._SKIP_PATH_PREFIXES:
+            if path.startswith(prefix):
+                return True
+
+        return False
+
     def _enqueue(self, url: str):
         """Add a URL to the crawl queue if not already visited and within limits."""
         if not self._is_visited(url) and self._page_count < self.MAX_PAGES:
             parsed = urlparse(url)
             if _normalize_domain(parsed.netloc) == self._base_domain:
+                if self._should_skip_url(url):
+                    return
                 try:
                     self.queue.put_nowait(url)
                 except asyncio.QueueFull:
