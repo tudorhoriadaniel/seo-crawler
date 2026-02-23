@@ -402,12 +402,32 @@ class CrawlEngine:
         except Exception as e:
             logger.error(f"Progress update failed: {e}")
 
-        # Discover new internal links (only same domain)
+        # Discover new internal links from ALL sources on the page
         soup = BeautifulSoup(html, "lxml")
         discovered = 0
-        for a_tag in soup.find_all("a", href=True):
-            href = a_tag["href"]
-            if href.startswith(("#", "mailto:", "tel:", "javascript:")):
+        found_hrefs = set()
+
+        # 1. All <a href="..."> links
+        for tag in soup.find_all("a", href=True):
+            found_hrefs.add(tag["href"])
+
+        # 2. <link rel="alternate" hreflang="..."> (language versions)
+        for tag in soup.find_all("link", href=True, rel=True):
+            rels = tag.get("rel", [])
+            if "alternate" in rels or "canonical" in rels:
+                found_hrefs.add(tag["href"])
+
+        # 3. <area href="..."> in image maps
+        for tag in soup.find_all("area", href=True):
+            found_hrefs.add(tag["href"])
+
+        # 4. <iframe src="..."> on same domain (rare but possible)
+        for tag in soup.find_all("iframe", src=True):
+            found_hrefs.add(tag["src"])
+
+        # Queue all discovered same-domain URLs
+        for href in found_hrefs:
+            if href.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
                 continue
             full_url = urljoin(analyze_url, href).split("#")[0].split("?")[0].rstrip("/")
             parsed = urlparse(full_url)
