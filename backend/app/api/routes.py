@@ -276,16 +276,7 @@ async def get_crawl_summary(crawl_id: int, db: AsyncSession = Depends(get_db)):
                 "url": p.url, "page_id": p.id,
                 "detail": i.get("message", ""),
             })
-    # Also count redirect issues separately
-    for p in pages:
-        if (p.status_code or 0) in REDIRECT_CODES:
-            for i in (p.issues or []):
-                if i.get("type") == "redirect":
-                    warnings += 1
-                    issue_map["redirect"].append({
-                        "url": p.url, "page_id": p.id,
-                        "detail": i.get("message", ""),
-                    })
+    # Note: redirects are now followed transparently (no 301 records saved)
 
     # --- Duplicate titles (exclude redirects) ---
     title_groups = defaultdict(list)

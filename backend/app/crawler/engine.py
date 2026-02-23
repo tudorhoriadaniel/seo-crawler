@@ -322,53 +322,22 @@ class CrawlEngine:
         was_redirected = len(resp.history) > 0
         original_status = resp.history[0].status_code if was_redirected else final_status
 
-        # ── Handle redirects: save lightweight redirect record, then analyze final page ──
+        # ── Handle redirects: follow transparently, only save the final page ──
         if was_redirected:
             logger.info(f"URL {url} redirected ({original_status}) to {final_url} (status {final_status})")
 
-            # If the final destination is off our domain, skip it entirely
+            # If the final destination is off our domain, skip entirely
             if final_domain != self.domain:
                 logger.info(f"Redirect landed off-domain ({final_domain}), skipping")
                 return
 
-            # Save a minimal redirect record for the ORIGINAL URL — NO SEO issues
-            _empty = {
-                "url": url, "status_code": original_status,
-                "response_time": response_time, "content_length": 0,
-                "title": None, "title_length": 0,
-                "meta_description": None, "meta_description_length": 0,
-                "canonical_url": None, "canonical_issues": None,
-                "robots_meta": None, "is_noindex": False, "is_nofollow_meta": False,
-                "h1_count": 0, "h1_texts": None,
-                "h2_count": 0, "h3_count": 0, "h4_count": 0, "h5_count": 0, "h6_count": 0,
-                "total_images": 0, "images_without_alt": 0, "images_without_alt_urls": None,
-                "images_with_empty_alt": 0, "images_with_empty_alt_urls": None,
-                "internal_links": 0, "external_links": 0,
-                "nofollow_links": 0, "nofollow_internal_links": None, "broken_links": 0,
-                "has_schema_markup": False, "schema_types": None,
-                "has_viewport_meta": False, "word_count": 0, "has_lazy_loading": False,
-                "code_to_text_ratio": None, "html_size": None, "text_size": None,
-                "og_title": None, "og_description": None, "og_image": None,
-                "has_hreflang": False, "hreflang_entries": None, "hreflang_issues": None,
-                "has_placeholders": False, "placeholder_content": None,
-                "redirect_target": final_url, "issues": [], "score": 0,
-            }
-            try:
-                await self._save_page(_empty, "redirect")
-            except Exception as e:
-                logger.error(f"DB save failed for redirect {url}: {e}")
-
-            # Check if the final URL was already crawled directly — skip if so
+            # Check if the final URL was already crawled — skip if so
             async with self._lock:
                 if final_url in self.visited:
-                    try:
-                        await self._update_crawl(pages_crawled=len(self.visited))
-                    except Exception:
-                        pass
                     return
                 self.visited.add(final_url)
 
-            # Fall through to analyze the final (200) page below
+            # Fall through to analyze the final (200) page below — no 301 record saved
 
         content_type = resp.headers.get("content-type", "")
 
