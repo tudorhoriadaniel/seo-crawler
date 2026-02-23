@@ -376,6 +376,16 @@ class SEOAnalyzer:
             if not lang:
                 hreflang_issues.append("Hreflang tag has empty language code")
 
+        # Check for duplicate hreflang language codes (e.g. two "en" tags with different URLs)
+        if hreflang_entries:
+            lang_counts = {}
+            for h in hreflang_entries:
+                lang_counts[h["lang"]] = lang_counts.get(h["lang"], 0) + 1
+            duplicates = {lang: count for lang, count in lang_counts.items() if count > 1}
+            if duplicates:
+                dup_list = ", ".join(f'"{lang}" ({count}x)' for lang, count in duplicates.items())
+                hreflang_issues.append(f"Duplicate hreflang tags found: {dup_list}")
+
         # Check for x-default
         if hreflang_entries and not any(h["lang"] == "x-default" for h in hreflang_entries):
             hreflang_issues.append("Hreflang set found but missing x-default")
