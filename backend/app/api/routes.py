@@ -33,7 +33,9 @@ def _analyze_robots_bots(robots_content: str | None) -> list[dict]:
 # ─── Projects ───────────────────────────────────────────────
 @router.post("/projects", response_model=ProjectResponse)
 async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)):
-    project = Project(name=data.name, url=data.url)
+    from urllib.parse import urlparse as _urlparse
+    name = data.name or _urlparse(data.url).netloc or data.url
+    project = Project(name=name, url=data.url)
     db.add(project)
     await db.commit()
     await db.refresh(project)
@@ -65,9 +67,9 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
 
 
 # ─── Crawls ─────────────────────────────────────────────────
-async def _run_crawl(crawl_id: int, base_url: str):
+async def _run_crawl(crawl_id: int, base_url: str, ignore_robots: bool = False):
     """Background task to execute the crawl."""
-    engine = CrawlEngine(crawl_id, base_url)
+    engine = CrawlEngine(crawl_id, base_url, ignore_robots=ignore_robots)
     await engine.run()
 
 
@@ -82,7 +84,7 @@ async def start_crawl(data: CrawlCreate, background_tasks: BackgroundTasks, db: 
     await db.commit()
     await db.refresh(crawl)
 
-    background_tasks.add_task(_run_crawl, crawl.id, project.url)
+    background_tasks.add_task(_run_crawl, crawl.id, project.url, data.ignore_robots)
     return crawl
 
 

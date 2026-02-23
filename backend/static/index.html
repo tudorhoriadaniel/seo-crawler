@@ -232,24 +232,24 @@ function render() {
 
 // ─── Home ────────────────────────────────────────────
 async function renderHome(el) {
-  el.innerHTML = '<div class="card"><h3>New Crawl</h3><div class="form-row"><input id="site-name" placeholder="Project name (e.g. My Website)"><input id="site-url" placeholder="https://example.com" value="https://"><button class="btn" onclick="startCrawl()">Crawl</button></div></div><div class="card"><h3>Recent Projects</h3><div id="projects-list"><div class="spinner"></div></div></div>';
+  el.innerHTML = '<div class="card"><h3>New Crawl</h3><div class="form-row"><input id="site-url" placeholder="https://example.com" value="https://"><button class="btn" onclick="startCrawl()">Crawl</button></div><div style="margin-top:4px;display:flex;align-items:center;gap:8px;"><label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);cursor:pointer;"><input type="checkbox" id="ignore-robots" style="accent-color:var(--accent);cursor:pointer;"> Bypass robots.txt</label></div></div><div class="card"><h3>Recent Projects</h3><div id="projects-list"><div class="spinner"></div></div></div>';
   try {
     const projects = await api('/projects');
     const list = document.getElementById('projects-list');
     if (!projects.length) { list.innerHTML = '<div class="empty">No projects yet. Start your first crawl above.</div>'; return; }
-    list.innerHTML = '<table><thead><tr><th>Name</th><th>URL</th><th>Created</th><th></th></tr></thead><tbody>' +
-      projects.map(function(p) { return '<tr><td><strong>' + esc(p.name) + '</strong></td><td class="url-cell">' + esc(p.url) + '</td><td>' + new Date(p.created_at).toLocaleDateString() + '</td><td><button class="btn btn-sm" onclick="viewProject(' + p.id + ')">Crawls</button> <button class="btn btn-sm btn-outline" onclick="recrawl(' + p.id + ')">Re-crawl</button> <button class="btn btn-sm btn-danger" onclick="deleteProject(' + p.id + ')">Delete</button></td></tr>'; }).join('') +
+    list.innerHTML = '<table><thead><tr><th>URL</th><th>Created</th><th></th></tr></thead><tbody>' +
+      projects.map(function(p) { return '<tr><td class="url-cell"><strong>' + esc(p.url) + '</strong></td><td>' + new Date(p.created_at).toLocaleDateString() + '</td><td><button class="btn btn-sm" onclick="viewProject(' + p.id + ')">Crawls</button> <button class="btn btn-sm btn-outline" onclick="recrawl(' + p.id + ')">Re-crawl</button> <button class="btn btn-sm btn-danger" onclick="deleteProject(' + p.id + ')">Delete</button></td></tr>'; }).join('') +
       '</tbody></table>';
   } catch (e) { document.getElementById('projects-list').innerHTML = '<div class="empty">Error loading projects</div>'; }
 }
 
 async function startCrawl() {
-  var name = document.getElementById('site-name').value.trim();
   var url = document.getElementById('site-url').value.trim();
-  if (!name || !url || url === 'https://') return alert('Enter project name and URL');
+  if (!url || url === 'https://') return alert('Enter a URL to crawl');
+  var ignoreRobots = document.getElementById('ignore-robots').checked;
   try {
-    var project = await api('/projects', { method: 'POST', body: JSON.stringify({ name: name, url: url }) });
-    var crawl = await api('/crawls', { method: 'POST', body: JSON.stringify({ project_id: project.id }) });
+    var project = await api('/projects', { method: 'POST', body: JSON.stringify({ url: url }) });
+    var crawl = await api('/crawls', { method: 'POST', body: JSON.stringify({ project_id: project.id, ignore_robots: ignoreRobots }) });
     navigate('crawling', { crawl: crawl });
     pollCrawl(crawl.id);
   } catch (e) { alert('Error: ' + e.message); }

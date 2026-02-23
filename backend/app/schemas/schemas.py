@@ -5,8 +5,8 @@ from datetime import datetime
 
 # --- Projects ---
 class ProjectCreate(BaseModel):
-    name: str
     url: str
+    name: Optional[str] = None  # auto-generated from URL if not provided
 
 
 class ProjectResponse(BaseModel):
@@ -22,6 +22,7 @@ class ProjectResponse(BaseModel):
 # --- Crawls ---
 class CrawlCreate(BaseModel):
     project_id: int
+    ignore_robots: bool = False
 
 
 class CrawlResponse(BaseModel):

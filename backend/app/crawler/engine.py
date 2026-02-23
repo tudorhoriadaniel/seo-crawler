@@ -53,11 +53,12 @@ class CrawlEngine:
     CONCURRENCY = 10
     TIMEOUT = 15
 
-    def __init__(self, crawl_id: int, base_url: str):
+    def __init__(self, crawl_id: int, base_url: str, ignore_robots: bool = False):
         self.crawl_id = crawl_id
         self.base_url = base_url.rstrip("/")
         self.domain = urlparse(base_url).netloc
         self._base_domain = _normalize_domain(self.domain)
+        self.ignore_robots = ignore_robots
         # Normalized set for deduplication — prevents crawling same page twice
         self._visited_normalized: set[str] = set()
         self.queue: asyncio.Queue = asyncio.Queue()
@@ -228,10 +229,13 @@ class CrawlEngine:
                     self._page_count = len(self._visited_normalized)
                     logger.info(f"Resumed with {self._page_count} already-crawled URLs")
 
-            # Parse robots.txt
+            # Parse robots.txt (always fetch for bot analysis, but optionally ignore for crawling)
             logger.info("Fetching robots.txt...")
             self.robots_parser = RobotsParser(self.base_url)
             await self.robots_parser.fetch()
+
+            if self.ignore_robots:
+                logger.info("Ignoring robots.txt restrictions (user override)")
 
             # Save robots.txt info to crawl
             robots_status = "found" if self.robots_parser.content else "not_found"
@@ -326,8 +330,8 @@ class CrawlEngine:
                             continue
                         self._mark_visited(url)
 
-                    # Check robots.txt
-                    if self.robots_parser and not self.robots_parser.is_allowed(url):
+                    # Check robots.txt (skip if user chose to bypass)
+                    if not self.ignore_robots and self.robots_parser and not self.robots_parser.is_allowed(url):
                         logger.info(f"Blocked by robots.txt: {url}")
                         continue
 
