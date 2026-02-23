@@ -10,16 +10,18 @@ from bs4 import BeautifulSoup
 # Placeholder patterns to detect dev/test content
 # Only match clear, unambiguous placeholder text — no framework syntax ($var, {{ }})
 PLACEHOLDER_PATTERNS = [
-    r'lorem\s+ipsum',          # lorem ipsum
-    r'dolor\s+sit\s+amet',     # dolor sit amet
-    r'consectetur\s+adipiscing',  # consectetur adipiscing
-    r'TODO:?\s',               # TODO items
-    r'FIXME:?\s',              # FIXME items
-    r'your\s+(company|name|title|heading|text)\s+here',  # "Your company here"
-    r'insert\s+(your\s+)?\w+\s+here',   # "Insert text here"
-    r'placeholder\s+text',     # "placeholder text"
+    r'lorem\s+ipsum',              # lorem ipsum
+    r'dolor\s+sit\s+amet',         # dolor sit amet
+    r'consectetur\s+adipiscing',   # consectetur adipiscing
+]
+# These patterns are case-sensitive (no IGNORECASE) to avoid matching
+# normal words like Spanish "todo" or common text
+PLACEHOLDER_PATTERNS_STRICT = [
+    r'TODO:\s',                    # TODO: items (requires colon)
+    r'FIXME:\s',                   # FIXME: items (requires colon)
 ]
 PLACEHOLDER_RE = re.compile('|'.join(PLACEHOLDER_PATTERNS), re.IGNORECASE)
+PLACEHOLDER_STRICT_RE = re.compile('|'.join(PLACEHOLDER_PATTERNS_STRICT))
 
 
 class SEOAnalyzer:
@@ -476,6 +478,9 @@ class SEOAnalyzer:
 
         found = []
         for match in PLACEHOLDER_RE.finditer(text):
+            snippet = text[max(0, match.start() - 20):match.end() + 20].strip()
+            found.append({"match": match.group(), "context": snippet})
+        for match in PLACEHOLDER_STRICT_RE.finditer(text):
             snippet = text[max(0, match.start() - 20):match.end() + 20].strip()
             found.append({"match": match.group(), "context": snippet})
 
